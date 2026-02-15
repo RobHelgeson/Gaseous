@@ -70,7 +70,7 @@ export class Config {
   }
 
   /** Pack numeric params into a Float32Array for GPU upload */
-  toSimParams(canvasWidth, canvasHeight, mouseX, mouseY, frameNumber) {
+  toSimParams(canvasWidth, canvasHeight, mouseX, mouseY, frameNumber, fadeAlpha = 1.0) {
     const v = this.#values;
     const binSize = v.sphRadius;
     const binsX = Math.ceil(canvasWidth / binSize);
@@ -101,6 +101,8 @@ export class Config {
     f32[17] = v.mouseForce;       // mouse_force
     u32[18] = frameNumber;        // frame_number
     f32[19] = v.particleScale;    // particle_scale
+    f32[20] = fadeAlpha;          // fade_alpha
+    f32[21] = v.attractorDecay;   // attractor_decay
 
     return buf;
   }

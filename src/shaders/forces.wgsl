@@ -94,7 +94,7 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
         force += attractor_force;
 
         // Attractor decay
-        p.attractor_str *= (1.0 - params.drag_coefficient * params.dt);
+        p.attractor_str *= (1.0 - params.attractor_decay * params.dt);
 
         // Tidal stripping: distance-dependent decay
         p.attractor_str *= (1.0 - TIDAL_FACTOR * dist * params.dt);

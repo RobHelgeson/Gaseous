@@ -37,6 +37,8 @@ fn vs_main(
     if (fading) {
         alpha = p.attractor_str;
     }
+    // Global cycle fade (spawning fade-in / fading fade-out)
+    alpha *= params.fade_alpha;
 
     // Quad size in pixels, scaled by particle_scale
     let size = 4.0 * params.particle_scale;

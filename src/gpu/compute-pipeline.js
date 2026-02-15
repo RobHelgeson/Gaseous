@@ -16,6 +16,9 @@ export class ComputePipelines {
   densityPipeline = null;
   forcesPipeline = null;
   integratePipeline = null;
+  homogClearPipeline = null;
+  homogAccumPipeline = null;
+  homogReducePipeline = null;
 
   // Bind group layouts
   clearBinsBGL = null;
@@ -25,6 +28,8 @@ export class ComputePipelines {
   densityBGL = null;
   forcesBGL = null;
   integrateBGL = null;
+  homogAccumBGL = null;
+  homogReduceBGL = null;
 
   async init(device) {
     this.#device = device;
@@ -34,6 +39,7 @@ export class ComputePipelines {
       this.#createDensityPipeline(),
       this.#createForcesPipeline(),
       this.#createIntegratePipeline(),
+      this.#createHomogeneityPipelines(),
     ]);
   }
 
@@ -174,6 +180,51 @@ export class ComputePipelines {
     });
   }
 
+  async #createHomogeneityPipelines() {
+    const accumCode = await loadComputeShader('src/shaders/homogeneity.wgsl');
+    const accumModule = this.#device.createShaderModule({ label: 'homogeneity', code: accumCode });
+
+    const reduceCode = await loadShader('src/shaders/homogeneity-reduce.wgsl');
+    const reduceModule = this.#device.createShaderModule({ label: 'homogeneity-reduce', code: reduceCode });
+
+    // Shared BGL for clear + accumulate: cells(rw) + particles(read) + params(uniform)
+    this.homogAccumBGL = this.#device.createBindGroupLayout({
+      label: 'homog-accum-bgl',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+      ],
+    });
+
+    const accumLayout = this.#device.createPipelineLayout({ bindGroupLayouts: [this.homogAccumBGL] });
+
+    this.homogClearPipeline = this.#device.createComputePipeline({
+      label: 'homogClearPipeline',
+      layout: accumLayout,
+      compute: { module: accumModule, entryPoint: 'clear_cells' },
+    });
+    this.homogAccumPipeline = this.#device.createComputePipeline({
+      label: 'homogAccumPipeline',
+      layout: accumLayout,
+      compute: { module: accumModule, entryPoint: 'accumulate' },
+    });
+
+    // Reduce BGL: cells(read) + result(rw)
+    this.homogReduceBGL = this.#device.createBindGroupLayout({
+      label: 'homog-reduce-bgl',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      ],
+    });
+    this.homogReducePipeline = this.#device.createComputePipeline({
+      label: 'homogReducePipeline',
+      layout: this.#device.createPipelineLayout({ bindGroupLayouts: [this.homogReduceBGL] }),
+      compute: { module: reduceModule, entryPoint: 'reduce_variance' },
+    });
+  }
+
   createBindGroups(buffers) {
     const d = this.#device;
 
@@ -279,6 +330,25 @@ export class ComputePipelines {
       ],
     });
 
+    // Homogeneity bind groups
+    const homogAccumBG = d.createBindGroup({
+      label: 'homog-accum-bg',
+      layout: this.homogAccumBGL,
+      entries: [
+        { binding: 0, resource: { buffer: buffers.homogCellBuffer } },
+        { binding: 1, resource: { buffer: buffers.particleBuffer } },
+        { binding: 2, resource: { buffer: buffers.simParamsBuffer } },
+      ],
+    });
+    const homogReduceBG = d.createBindGroup({
+      label: 'homog-reduce-bg',
+      layout: this.homogReduceBGL,
+      entries: [
+        { binding: 0, resource: { buffer: buffers.homogCellBuffer } },
+        { binding: 1, resource: { buffer: buffers.homogResultBuffer } },
+      ],
+    });
+
     return {
       clearBinsBG,
       countBinsBG,
@@ -291,6 +361,8 @@ export class ComputePipelines {
       forcesBG_A,
       forcesBG_B,
       integrateBG,
+      homogAccumBG,
+      homogReduceBG,
     };
   }
 }

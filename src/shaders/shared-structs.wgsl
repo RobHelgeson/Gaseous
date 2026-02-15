@@ -30,6 +30,8 @@ struct SimParams {
     mouse_force: f32,
     frame_number: u32,
     particle_scale: f32,
+    fade_alpha: f32,
+    attractor_decay: f32,
 };
 
 struct BallData {

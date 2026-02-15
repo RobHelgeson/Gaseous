@@ -10,6 +10,7 @@ import { ComputePipelines } from './gpu/compute-pipeline.js';
 import { FrameEncoder } from './gpu/frame.js';
 import { loadSharedStructs } from './gpu/shader-loader.js';
 import { BallManager } from './ball-manager.js';
+import { CycleManager } from './cycle-manager.js';
 
 async function main() {
   const canvas = document.getElementById('canvas');
@@ -44,6 +45,12 @@ async function main() {
 
   const frameEncoder = new FrameEncoder(gpu.device, renderPipelines, computePipelines, buffers);
 
+  // Cycle manager — respawn callback reinits buffers + bind groups
+  const cycleManager = new CycleManager(config, ballManager, () => {
+    buffers.init(config.get('particleCount'), gpu.width, gpu.height, config.get('sphRadius'), ballManager);
+    frameEncoder.rebuildBindGroups();
+  });
+
   const input = new Input(canvas, config);
   const ui = new UIPanel(config);
 
@@ -52,7 +59,7 @@ async function main() {
     console.log(paused ? 'Paused' : 'Resumed');
   });
   input.onRestart(() => {
-    console.log('Restart cycle');
+    cycleManager.restart();
   });
   input.onToggleUI(() => {
     ui.toggle();
@@ -83,20 +90,35 @@ async function main() {
       frameEncoder.rebuildBindGroups();
     }
 
+    // Advance cycle state machine (may trigger respawn)
+    cycleManager.update(1 / 60);
+
     // Update ball positions
     ballManager.update(1 / 60, config.get('bounceDamping'));
 
-    // Upload sim params + ball data
+    // Upload sim params (with cycle fade alpha) + ball data
     const simData = config.toSimParams(
       gpu.width, gpu.height,
       input.mouseX, input.mouseY,
       frameNumber,
+      cycleManager.fadeAlpha,
     );
     buffers.uploadSimParams(simData);
     buffers.uploadBallData(ballManager.toGpuData());
 
+    // Check if we should run homogeneity this frame
+    const runHomog = cycleManager.shouldCheckHomogeneity(frameNumber) &&
+                     buffers.homogReadbackAvailable;
+
     // Render — use buffers.particleCount to match allocated buffer sizes
-    frameEncoder.render(gpu, buffers.particleCount, buffers.binCount);
+    frameEncoder.render(gpu, buffers.particleCount, buffers.binCount, runHomog);
+
+    // Async homogeneity readback (non-blocking, 1-2 frames behind)
+    if (runHomog) {
+      buffers.readHomogeneity().then(v => {
+        cycleManager.onHomogeneityResult(v);
+      });
+    }
 
     frameNumber++;
   }
@@ -104,7 +126,7 @@ async function main() {
   requestAnimationFrame(frame);
 
   // Expose for debugging
-  window.__gaseous = { config, gpu, input, ui, buffers, ballManager, renderPipelines, computePipelines };
+  window.__gaseous = { config, gpu, input, ui, buffers, ballManager, cycleManager, renderPipelines, computePipelines };
 }
 
 main();

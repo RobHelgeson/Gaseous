@@ -40,7 +40,7 @@ export class FrameEncoder {
   }
 
   /** Encode and submit one frame */
-  render(gpu, particleCount, binCount) {
+  render(gpu, particleCount, binCount, runHomogeneity = false) {
     if (this.computePipelines && this.computeBindGroups) {
       // Spatial hashing requires multiple submits for prefix sum uniform updates
       // Returns true if exclusive prefix sum ended in buffer A
@@ -65,6 +65,11 @@ export class FrameEncoder {
       this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
 
       this.#device.queue.submit([encoder.finish()]);
+
+      // Homogeneity check (separate submit, reads current particle state)
+      if (runHomogeneity) {
+        this.#runHomogeneity(particleCount);
+      }
     } else {
       const encoder = this.#device.createCommandEncoder({ label: 'frame' });
       this.#uploadBgParams(gpu.width, gpu.height);
@@ -161,6 +166,43 @@ export class FrameEncoder {
     }
 
     return readFromA;
+  }
+
+  #runHomogeneity(particleCount) {
+    const bg = this.computeBindGroups;
+    const cp = this.computePipelines;
+
+    const encoder = this.#device.createCommandEncoder({ label: 'homogeneity' });
+
+    // Clear cell accumulators (256 cells × 4 u32s = 1024 values)
+    const clear = encoder.beginComputePass({ label: 'homog-clear' });
+    clear.setPipeline(cp.homogClearPipeline);
+    clear.setBindGroup(0, bg.homogAccumBG);
+    clear.dispatchWorkgroups(Math.ceil(1024 / 64));
+    clear.end();
+
+    // Accumulate particle colors per cell
+    const accum = encoder.beginComputePass({ label: 'homog-accumulate' });
+    accum.setPipeline(cp.homogAccumPipeline);
+    accum.setBindGroup(0, bg.homogAccumBG);
+    accum.dispatchWorkgroups(Math.ceil(particleCount / 64));
+    accum.end();
+
+    // Reduce to single variance value
+    const reduce = encoder.beginComputePass({ label: 'homog-reduce' });
+    reduce.setPipeline(cp.homogReducePipeline);
+    reduce.setBindGroup(0, bg.homogReduceBG);
+    reduce.dispatchWorkgroups(1);
+    reduce.end();
+
+    // Copy result to CPU-readable buffer
+    encoder.copyBufferToBuffer(
+      this.buffers.homogResultBuffer, 0,
+      this.buffers.homogReadbackBuffer, 0,
+      4,
+    );
+
+    this.#device.queue.submit([encoder.finish()]);
   }
 
   #runDensity(encoder, particleCount, offsetInA) {

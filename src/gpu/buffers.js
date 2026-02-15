@@ -37,6 +37,13 @@ export class Buffers {
   hdrView = null;
   /** @type {GPUSampler} */
   hdrSampler = null;
+  /** @type {GPUBuffer} */
+  homogCellBuffer = null;
+  /** @type {GPUBuffer} */
+  homogResultBuffer = null;
+  /** @type {GPUBuffer} */
+  #homogReadbackBuffer = null;
+  #homogReadbackAvailable = true;
 
   #width = 0;
   #height = 0;
@@ -57,6 +64,7 @@ export class Buffers {
     this.#createPrefixParamsBuffer();
     this.#createHdrTexture(width, height);
     this.#createSampler();
+    this.#createHomogeneityBuffers();
   }
 
   #createParticleBuffer(count, canvasW, canvasH, ballManager) {
@@ -196,6 +204,30 @@ export class Buffers {
     this.hdrView = this.hdrTexture.createView();
   }
 
+  #createHomogeneityBuffers() {
+    if (this.homogCellBuffer) this.homogCellBuffer.destroy();
+    if (this.homogResultBuffer) this.homogResultBuffer.destroy();
+    if (this.#homogReadbackBuffer) this.#homogReadbackBuffer.destroy();
+
+    // 256 cells × 4 u32s (r_sum, g_sum, b_sum, count)
+    this.homogCellBuffer = this.#device.createBuffer({
+      label: 'homogCellBuffer',
+      size: 256 * 4 * 4,
+      usage: GPUBufferUsage.STORAGE,
+    });
+    this.homogResultBuffer = this.#device.createBuffer({
+      label: 'homogResultBuffer',
+      size: 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    this.#homogReadbackBuffer = this.#device.createBuffer({
+      label: 'homogReadbackBuffer',
+      size: 4,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+    this.#homogReadbackAvailable = true;
+  }
+
   #createSampler() {
     this.hdrSampler = this.#device.createSampler({
       label: 'hdrSampler',
@@ -228,6 +260,25 @@ export class Buffers {
     this.#device.queue.writeBuffer(this.prefixParamsBuffer, 0, buf);
   }
 
+  /** Async readback of homogeneity variance from GPU */
+  async readHomogeneity() {
+    if (!this.#homogReadbackAvailable) return null;
+    this.#homogReadbackAvailable = false;
+    try {
+      await this.#homogReadbackBuffer.mapAsync(GPUMapMode.READ);
+      const data = new Float32Array(this.#homogReadbackBuffer.getMappedRange());
+      const value = data[0];
+      this.#homogReadbackBuffer.unmap();
+      return value;
+    } catch {
+      return null;
+    } finally {
+      this.#homogReadbackAvailable = true;
+    }
+  }
+
+  get homogReadbackBuffer() { return this.#homogReadbackBuffer; }
+  get homogReadbackAvailable() { return this.#homogReadbackAvailable; }
   get particleCount() { return this.#particleCount; }
   get binCount() { return this.#binCount; }
 
@@ -240,6 +291,9 @@ export class Buffers {
     this.binOffsetBufferB?.destroy();
     this.prefixParamsBuffer?.destroy();
     this.ballDataBuffer?.destroy();
+    this.homogCellBuffer?.destroy();
+    this.homogResultBuffer?.destroy();
+    this.#homogReadbackBuffer?.destroy();
     this.hdrTexture?.destroy();
   }
 }
