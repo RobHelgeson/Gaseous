@@ -29,6 +29,8 @@ export class Buffers {
   binOffsetBufferB = null;
   /** @type {GPUBuffer} */
   prefixParamsBuffer = null;
+  /** @type {GPUBuffer} */
+  ballDataBuffer = null;
   /** @type {GPUTexture} */
   hdrTexture = null;
   /** @type {GPUTextureView} */
@@ -45,46 +47,66 @@ export class Buffers {
     this.#device = device;
   }
 
-  init(particleCount, width, height, sphRadius) {
+  init(particleCount, width, height, sphRadius, ballManager) {
     this.#particleCount = particleCount;
-    this.#createParticleBuffer(particleCount, width, height);
+    this.#createParticleBuffer(particleCount, width, height, ballManager);
     this.#createSortBuffer(particleCount);
     this.#createSimParamsBuffer();
+    this.#createBallDataBuffer();
     this.#createBinBuffers(width, height, sphRadius);
     this.#createPrefixParamsBuffer();
     this.#createHdrTexture(width, height);
     this.#createSampler();
   }
 
-  #createParticleBuffer(count, canvasW, canvasH) {
+  #createParticleBuffer(count, canvasW, canvasH, ballManager) {
     const data = new ArrayBuffer(count * PARTICLE_BYTE_SIZE);
     const f32 = new Float32Array(data);
     const u32 = new Uint32Array(data);
-
-    // 48 bytes = 12 floats per particle
     const STRIDE = PARTICLE_BYTE_SIZE / 4;
+
+    const balls = ballManager ? ballManager.balls : null;
 
     for (let i = 0; i < count; i++) {
       const base = i * STRIDE;
+      let x, y, vx, vy, color, ballId;
 
-      // Random position within canvas
-      const x = Math.random() * canvasW;
-      const y = Math.random() * canvasH;
-      f32[base + 0] = x;     // pos.x
-      f32[base + 1] = y;     // pos.y
-      f32[base + 2] = 0;     // vel.x
-      f32[base + 3] = 0;     // vel.y
+      if (balls && balls.length > 0) {
+        // Assign particles to balls in order
+        const ballIndex = Math.min(
+          Math.floor(i / Math.ceil(count / balls.length)),
+          balls.length - 1,
+        );
+        const ball = balls[ballIndex];
 
-      // Random color from palette
-      const c = PALETTE[Math.floor(Math.random() * PALETTE.length)];
-      f32[base + 4] = c[0];  // color.r
-      f32[base + 5] = c[1];  // color.g
-      f32[base + 6] = c[2];  // color.b
-      f32[base + 7] = 1.0;   // density (unused for now)
+        // Disk distribution around ball center
+        const angle = Math.random() * 2 * Math.PI;
+        const r = Math.sqrt(Math.random()) * ball.radius;
+        x = ball.x + Math.cos(angle) * r;
+        y = ball.y + Math.sin(angle) * r;
+        vx = ball.vx + (Math.random() - 0.5) * 10;
+        vy = ball.vy + (Math.random() - 0.5) * 10;
+        color = ball.color;
+        ballId = ballIndex;
+      } else {
+        x = Math.random() * canvasW;
+        y = Math.random() * canvasH;
+        vx = 0; vy = 0;
+        color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+        ballId = 0;
+      }
 
+      f32[base + 0] = x;
+      f32[base + 1] = y;
+      f32[base + 2] = vx;
+      f32[base + 3] = vy;
+      f32[base + 4] = color[0];
+      f32[base + 5] = color[1];
+      f32[base + 6] = color[2];
+      f32[base + 7] = 1.0;   // density
       f32[base + 8] = 0;     // pressure
       f32[base + 9] = 1.0;   // attractor_str
-      u32[base + 10] = 0;    // ball_id
+      u32[base + 10] = ballId;
       u32[base + 11] = 1;    // flags: alive=1
     }
 
@@ -131,6 +153,15 @@ export class Buffers {
       label: 'binOffsetBufferB',
       size: byteSize,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    });
+  }
+
+  #createBallDataBuffer() {
+    if (this.ballDataBuffer) this.ballDataBuffer.destroy();
+    this.ballDataBuffer = this.#device.createBuffer({
+      label: 'ballDataBuffer',
+      size: 5 * 48, // MAX_BALLS * BallData size
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
   }
 
@@ -186,6 +217,11 @@ export class Buffers {
     this.#device.queue.writeBuffer(this.simParamsBuffer, 0, data);
   }
 
+  /** Upload ball data to GPU */
+  uploadBallData(data) {
+    this.#device.queue.writeBuffer(this.ballDataBuffer, 0, data);
+  }
+
   /** Upload prefix sum params for one iteration */
   uploadPrefixParams(count, offset) {
     const buf = new Uint32Array([count, offset]);
@@ -203,6 +239,7 @@ export class Buffers {
     this.binOffsetBufferA?.destroy();
     this.binOffsetBufferB?.destroy();
     this.prefixParamsBuffer?.destroy();
+    this.ballDataBuffer?.destroy();
     this.hdrTexture?.destroy();
   }
 }

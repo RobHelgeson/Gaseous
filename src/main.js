@@ -9,6 +9,7 @@ import { RenderPipelines } from './gpu/render-pipeline.js';
 import { ComputePipelines } from './gpu/compute-pipeline.js';
 import { FrameEncoder } from './gpu/frame.js';
 import { loadSharedStructs } from './gpu/shader-loader.js';
+import { BallManager } from './ball-manager.js';
 
 async function main() {
   const canvas = document.getElementById('canvas');
@@ -25,8 +26,14 @@ async function main() {
   // Preload shared structs, then create pipelines
   await loadSharedStructs();
 
+  const ballManager = new BallManager(
+    config.get('ballCount'),
+    config.get('particleCount'),
+    gpu.width, gpu.height,
+  );
+
   const buffers = new Buffers(gpu.device);
-  buffers.init(config.get('particleCount'), gpu.width, gpu.height, config.get('sphRadius'));
+  buffers.init(config.get('particleCount'), gpu.width, gpu.height, config.get('sphRadius'), ballManager);
 
   const renderPipelines = new RenderPipelines();
   const computePipelines = new ComputePipelines();
@@ -51,9 +58,14 @@ async function main() {
     ui.toggle();
   });
 
-  // Log config changes
+  // Handle config changes
   config.onChange((key, value, old) => {
     console.log(`Config: ${key} ${old} → ${value}`);
+    if (key === 'particleCount') {
+      ballManager.respawn(config.get('ballCount'), value);
+      buffers.init(value, gpu.width, gpu.height, config.get('sphRadius'), ballManager);
+      frameEncoder.rebuildBindGroups();
+    }
   });
 
   // Frame loop
@@ -67,19 +79,24 @@ async function main() {
     const resized = gpu.handleResize();
     if (resized) {
       buffers.handleResize(gpu.width, gpu.height, config.get('sphRadius'));
+      ballManager.updateCanvasSize(gpu.width, gpu.height);
       frameEncoder.rebuildBindGroups();
     }
 
-    // Upload sim params
+    // Update ball positions
+    ballManager.update(1 / 60, config.get('bounceDamping'));
+
+    // Upload sim params + ball data
     const simData = config.toSimParams(
       gpu.width, gpu.height,
       input.mouseX, input.mouseY,
       frameNumber,
     );
     buffers.uploadSimParams(simData);
+    buffers.uploadBallData(ballManager.toGpuData());
 
-    // Render
-    frameEncoder.render(gpu, config.get('particleCount'), buffers.binCount);
+    // Render — use buffers.particleCount to match allocated buffer sizes
+    frameEncoder.render(gpu, buffers.particleCount, buffers.binCount);
 
     frameNumber++;
   }
@@ -87,7 +104,7 @@ async function main() {
   requestAnimationFrame(frame);
 
   // Expose for debugging
-  window.__gaseous = { config, gpu, input, ui, buffers, renderPipelines, computePipelines };
+  window.__gaseous = { config, gpu, input, ui, buffers, ballManager, renderPipelines, computePipelines };
 }
 
 main();

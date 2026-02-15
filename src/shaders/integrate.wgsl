@@ -1,10 +1,10 @@
-// integrate.wgsl — Symplectic Euler integration with boundary handling
+// integrate.wgsl — Symplectic Euler position integration + boundary handling
+// Forces shader has already updated velocity. This shader applies vel to pos.
 // Expects shared-structs.wgsl to be prepended
 
 @group(0) @binding(0) var<storage, read_write> particles : array<Particle>;
 @group(0) @binding(1) var<uniform> params : SimParams;
 
-const GRAVITY_ACCEL : f32 = 80.0;  // Simple downward gravity for Phase 3
 const BOUNCE_DAMPING : f32 = 0.7;
 const SHED_THRESHOLD : f32 = 0.1;
 
@@ -14,20 +14,11 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
     if (idx >= params.particle_count) { return; }
 
     var p = particles[idx];
-
-    // Skip dead particles
     if ((p.flags & 1u) == 0u) { return; }
 
-    let pos = p.pos_vel.xy;
     var vel = p.pos_vel.zw;
+    var new_pos = p.pos_vel.xy + vel * params.dt;
 
-    // Simple gravity toward bottom of screen
-    vel.y += GRAVITY_ACCEL * params.dt;
-
-    // Symplectic Euler
-    var new_pos = pos + vel * params.dt;
-
-    // Boundary handling
     let is_bound = p.attractor_str > SHED_THRESHOLD;
 
     if (is_bound) {

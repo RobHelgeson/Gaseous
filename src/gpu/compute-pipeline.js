@@ -13,6 +13,8 @@ export class ComputePipelines {
   sortPipeline = null;
   prefixSumPipeline = null;
   makeExclusivePipeline = null;
+  densityPipeline = null;
+  forcesPipeline = null;
   integratePipeline = null;
 
   // Bind group layouts
@@ -20,6 +22,8 @@ export class ComputePipelines {
   countBinsBGL = null;
   sortBGL = null;
   prefixSumBGL = null;
+  densityBGL = null;
+  forcesBGL = null;
   integrateBGL = null;
 
   async init(device) {
@@ -27,6 +31,8 @@ export class ComputePipelines {
     await Promise.all([
       this.#createSpatialHashPipelines(),
       this.#createPrefixSumPipeline(),
+      this.#createDensityPipeline(),
+      this.#createForcesPipeline(),
       this.#createIntegratePipeline(),
     ]);
   }
@@ -107,6 +113,49 @@ export class ComputePipelines {
     });
   }
 
+  async #createDensityPipeline() {
+    const code = await loadComputeShader('src/shaders/density.wgsl');
+    const module = this.#device.createShaderModule({ label: 'density', code });
+
+    // particles (rw) + params + bin_offsets (read) + bin_counts (read)
+    this.densityBGL = this.#device.createBindGroupLayout({
+      label: 'density-bgl',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+      ],
+    });
+    this.densityPipeline = this.#device.createComputePipeline({
+      label: 'densityPipeline',
+      layout: this.#device.createPipelineLayout({ bindGroupLayouts: [this.densityBGL] }),
+      compute: { module, entryPoint: 'cs_main' },
+    });
+  }
+
+  async #createForcesPipeline() {
+    const code = await loadComputeShader('src/shaders/forces.wgsl');
+    const module = this.#device.createShaderModule({ label: 'forces', code });
+
+    // particles (rw) + params + bin_offsets + bin_counts + balls
+    this.forcesBGL = this.#device.createBindGroupLayout({
+      label: 'forces-bgl',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+      ],
+    });
+    this.forcesPipeline = this.#device.createComputePipeline({
+      label: 'forcesPipeline',
+      layout: this.#device.createPipelineLayout({ bindGroupLayouts: [this.forcesBGL] }),
+      compute: { module, entryPoint: 'cs_main' },
+    });
+  }
+
   async #createIntegratePipeline() {
     const code = await loadComputeShader('src/shaders/integrate.wgsl');
     const module = this.#device.createShaderModule({ label: 'integrate', code });
@@ -184,6 +233,43 @@ export class ComputePipelines {
     const sortBG_A = makeSortBG(buffers.binOffsetBufferA);
     const sortBG_B = makeSortBG(buffers.binOffsetBufferB);
 
+    // Density: uses sorted particle buffer + bin offsets + bin counts
+    // After sort, bin_counts has been cleared and re-filled as atomic counters.
+    // We need the original counts — so we re-derive from offsets.
+    // Actually: after sort, frame.js copies sorted->main. Density reads main buffer.
+    // bin_offsets come from whichever prefix sum buffer was final.
+    // bin_counts: we need original counts. We'll re-count or store them.
+    // Simplification: density/forces use the exclusive prefix sum offsets.
+    // For count per bin: count[i] = offset[i+1] - offset[i].
+    // But that requires the inclusive sum. Let's just store counts separately.
+    // Actually the simplest: just use the same approach as sort — two variants.
+    const makeDensityBG = (offsetBuffer, countBuffer) => d.createBindGroup({
+      label: 'density-bg',
+      layout: this.densityBGL,
+      entries: [
+        { binding: 0, resource: { buffer: buffers.particleBuffer } },
+        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+        { binding: 2, resource: { buffer: offsetBuffer } },
+        { binding: 3, resource: { buffer: countBuffer } },
+      ],
+    });
+    const densityBG_A = makeDensityBG(buffers.binOffsetBufferA, buffers.binCountBuffer);
+    const densityBG_B = makeDensityBG(buffers.binOffsetBufferB, buffers.binCountBuffer);
+
+    const makeForcesBG = (offsetBuffer, countBuffer) => d.createBindGroup({
+      label: 'forces-bg',
+      layout: this.forcesBGL,
+      entries: [
+        { binding: 0, resource: { buffer: buffers.particleBuffer } },
+        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+        { binding: 2, resource: { buffer: offsetBuffer } },
+        { binding: 3, resource: { buffer: countBuffer } },
+        { binding: 4, resource: { buffer: buffers.ballDataBuffer } },
+      ],
+    });
+    const forcesBG_A = makeForcesBG(buffers.binOffsetBufferA, buffers.binCountBuffer);
+    const forcesBG_B = makeForcesBG(buffers.binOffsetBufferB, buffers.binCountBuffer);
+
     const integrateBG = d.createBindGroup({
       label: 'integrate-bg',
       layout: this.integrateBGL,
@@ -200,6 +286,10 @@ export class ComputePipelines {
       prefixSumBA,
       sortBG_A,
       sortBG_B,
+      densityBG_A,
+      densityBG_B,
+      forcesBG_A,
+      forcesBG_B,
       integrateBG,
     };
   }

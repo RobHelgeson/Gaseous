@@ -43,9 +43,10 @@ export class FrameEncoder {
   render(gpu, particleCount, binCount) {
     if (this.computePipelines && this.computeBindGroups) {
       // Spatial hashing requires multiple submits for prefix sum uniform updates
-      this.#runSpatialHash(particleCount, binCount);
+      // Returns true if exclusive prefix sum ended in buffer A
+      const offsetInA = this.#runSpatialHash(particleCount, binCount);
 
-      // Sort->main copy + integrate + render in one command buffer
+      // Sort->main copy + density + forces + integrate + render
       const encoder = this.#device.createCommandEncoder({ label: 'frame' });
 
       encoder.copyBufferToBuffer(
@@ -53,6 +54,9 @@ export class FrameEncoder {
         this.buffers.particleBuffer, 0,
         particleCount * 48,
       );
+
+      this.#runDensity(encoder, particleCount, offsetInA);
+      this.#runForces(encoder, particleCount, offsetInA);
       this.#runIntegrate(encoder, particleCount);
 
       this.#uploadBgParams(gpu.width, gpu.height);
@@ -71,6 +75,7 @@ export class FrameEncoder {
     }
   }
 
+  /** @returns {boolean} true if exclusive prefix sum result is in buffer A */
   #runSpatialHash(particleCount, binCount) {
     const bg = this.computeBindGroups;
     const cp = this.computePipelines;
@@ -154,6 +159,26 @@ export class FrameEncoder {
 
       this.#device.queue.submit([enc.finish()]);
     }
+
+    return readFromA;
+  }
+
+  #runDensity(encoder, particleCount, offsetInA) {
+    const bg = this.computeBindGroups;
+    const pass = encoder.beginComputePass({ label: 'density' });
+    pass.setPipeline(this.computePipelines.densityPipeline);
+    pass.setBindGroup(0, offsetInA ? bg.densityBG_A : bg.densityBG_B);
+    pass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+    pass.end();
+  }
+
+  #runForces(encoder, particleCount, offsetInA) {
+    const bg = this.computeBindGroups;
+    const pass = encoder.beginComputePass({ label: 'forces' });
+    pass.setPipeline(this.computePipelines.forcesPipeline);
+    pass.setBindGroup(0, offsetInA ? bg.forcesBG_A : bg.forcesBG_B);
+    pass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+    pass.end();
   }
 
   #runIntegrate(encoder, particleCount) {
