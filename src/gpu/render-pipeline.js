@@ -12,6 +12,9 @@ export class RenderPipelines {
   particlePipeline = null;
   particleBindGroupLayout = null;
 
+  fogPipeline = null;
+  fogBindGroupLayout = null;
+
   tonemapPipeline = null;
   tonemapBindGroupLayout = null;
 
@@ -20,6 +23,7 @@ export class RenderPipelines {
 
     await Promise.all([
       this.#createBackgroundPipeline(canvasFormat),
+      this.#createFogPipeline(),
       this.#createParticlePipeline(canvasFormat),
       this.#createTonemapPipeline(canvasFormat),
     ]);
@@ -51,6 +55,39 @@ export class RenderPipelines {
         module: fragModule,
         entryPoint: 'fs_main',
         targets: [{ format: 'rgba16float' }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+  }
+
+  async #createFogPipeline() {
+    const code = await loadParticleShader('src/shaders/ball-fog.wgsl');
+    const module = this.#device.createShaderModule({ label: 'ball-fog', code });
+
+    this.fogBindGroupLayout = this.#device.createBindGroupLayout({
+      label: 'fog-bgl',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+
+    this.fogPipeline = this.#device.createRenderPipeline({
+      label: 'fogPipeline',
+      layout: this.#device.createPipelineLayout({
+        bindGroupLayouts: [this.fogBindGroupLayout],
+      }),
+      vertex: { module, entryPoint: 'vs_main' },
+      fragment: {
+        module,
+        entryPoint: 'fs_main',
+        targets: [{
+          format: 'rgba16float',
+          blend: {
+            color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+            alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
+          },
+        }],
       },
       primitive: { topology: 'triangle-list' },
     });
@@ -134,6 +171,15 @@ export class RenderPipelines {
       ],
     });
 
+    const fogBG = device.createBindGroup({
+      label: 'fog-bg',
+      layout: this.fogBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: buffers.ballDataBuffer } },
+        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+      ],
+    });
+
     const tonemapBG = device.createBindGroup({
       label: 'tonemap-bg',
       layout: this.tonemapBindGroupLayout,
@@ -143,7 +189,7 @@ export class RenderPipelines {
       ],
     });
 
-    return { particleBG, tonemapBG };
+    return { particleBG, fogBG, tonemapBG };
   }
 
   /** Create background bind group with uniform buffer */

@@ -129,7 +129,7 @@ async function main() {
                      buffers.homogReadbackAvailable;
 
     // Render — dispatch activeCount but bin buffers use full allocated size
-    frameEncoder.render(gpu, activeCount, buffers.binCount, runHomog);
+    frameEncoder.render(gpu, activeCount, buffers.binCount, runHomog, config.get('ballCount'));
 
     // Async homogeneity readback (non-blocking, 1-2 frames behind)
     if (runHomog) {

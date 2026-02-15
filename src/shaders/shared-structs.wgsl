@@ -34,6 +34,9 @@ struct SimParams {
     attractor_decay: f32,
     bounce_damping: f32,
     tidal_stripping: f32,
+    fog_intensity: f32,
+    fog_falloff: f32,
+    fog_size: f32,
 };
 
 struct BallData {
