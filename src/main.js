@@ -6,6 +6,7 @@ import { Input } from './input.js';
 import { UIPanel } from './ui-panel.js';
 import { Buffers } from './gpu/buffers.js';
 import { RenderPipelines } from './gpu/render-pipeline.js';
+import { ComputePipelines } from './gpu/compute-pipeline.js';
 import { FrameEncoder } from './gpu/frame.js';
 import { loadSharedStructs } from './gpu/shader-loader.js';
 
@@ -27,10 +28,14 @@ async function main() {
   const buffers = new Buffers(gpu.device);
   buffers.init(config.get('particleCount'), gpu.width, gpu.height);
 
-  const pipelines = new RenderPipelines();
-  await pipelines.init(gpu.device, gpu.format);
+  const renderPipelines = new RenderPipelines();
+  const computePipelines = new ComputePipelines();
+  await Promise.all([
+    renderPipelines.init(gpu.device, gpu.format),
+    computePipelines.init(gpu.device),
+  ]);
 
-  const frameEncoder = new FrameEncoder(gpu.device, pipelines, null, buffers);
+  const frameEncoder = new FrameEncoder(gpu.device, renderPipelines, computePipelines, buffers);
 
   const input = new Input(canvas, config);
   const ui = new UIPanel(config);
@@ -82,7 +87,7 @@ async function main() {
   requestAnimationFrame(frame);
 
   // Expose for debugging
-  window.__gaseous = { config, gpu, input, ui, buffers, pipelines };
+  window.__gaseous = { config, gpu, input, ui, buffers, renderPipelines, computePipelines };
 }
 
 main();
