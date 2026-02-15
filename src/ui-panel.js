@@ -2,7 +2,7 @@
 
 import GUI from '../lib/lil-gui.esm.min.js';
 import { Config } from './config.js';
-import { listThemes } from './themes/theme-registry.js';
+import { listThemes, getThemeNames } from './themes/theme-registry.js';
 
 export class UIPanel {
   /** @type {GUI} */
@@ -35,7 +35,16 @@ export class UIPanel {
     const params = Config.PARAMS;
     const folders = {};
 
+    // Theme selector at the top level for easy access
+    this.#proxy.theme = this.#config.get('theme');
+    this.#controllers.theme = this.#gui.add(this.#proxy, 'theme', getThemeNames())
+      .name('Theme').onChange((v) => {
+        this.#config.set('theme', v);
+      });
+
     for (const [key, def] of Object.entries(params)) {
+      if (key === 'theme') continue; // already added at top level
+
       const cat = def.category;
       if (!folders[cat]) {
         folders[cat] = this.#gui.addFolder(cat.charAt(0).toUpperCase() + cat.slice(1));
@@ -47,11 +56,6 @@ export class UIPanel {
 
       if (typeof def.value === 'boolean') {
         this.#controllers[key] = folder.add(this.#proxy, key).name(def.label).onChange((v) => {
-          this.#config.set(key, v);
-        });
-      } else if (key === 'theme') {
-        // Theme dropdown — populated from registry
-        this.#controllers[key] = folder.add(this.#proxy, key, listThemes()).name(def.label).onChange((v) => {
           this.#config.set(key, v);
         });
       } else if (def.min !== undefined) {
