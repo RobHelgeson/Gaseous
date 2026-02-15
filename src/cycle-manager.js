@@ -44,7 +44,8 @@ export class CycleManager {
       case 'ACTIVE':
         this.#fadeAlpha = 1.0;
         // Transition when colors are well-mixed (after minimum active time)
-        if (this.#timer >= MIN_ACTIVE_TIME &&
+        if (this.#config.get('autoCycle') &&
+            this.#timer >= MIN_ACTIVE_TIME &&
             this.#homogeneityValue < this.#config.get('homogeneityThreshold')) {
           console.log(`Cycle: mixed (variance=${this.#homogeneityValue.toFixed(4)}), fading out`);
           this.#state = 'FADING';

@@ -20,6 +20,7 @@ const PARAM_DEFS = {
 
   // Cycle
   ballCount:           { value: 3,     min: 2,     max: 5,      step: 1,     category: 'cycle', label: 'Ball Count' },
+  autoCycle:           { value: true,                                         category: 'cycle', label: 'Auto Cycle' },
   homogeneityThreshold:{ value: 0.05,  min: 0.01,  max: 0.2,    step: 0.01,  category: 'cycle', label: 'Homogeneity' },
 
   // Interaction
