@@ -100,7 +100,7 @@ export class Config {
     f32[16] = mouseY;             // mouse_y
     f32[17] = v.mouseForce;       // mouse_force
     u32[18] = frameNumber;        // frame_number
-    u32[19] = 0;                  // padding
+    f32[19] = v.particleScale;    // particle_scale
 
     return buf;
   }

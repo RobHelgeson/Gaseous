@@ -4,6 +4,10 @@ import { GpuContext } from './gpu-context.js';
 import { Config } from './config.js';
 import { Input } from './input.js';
 import { UIPanel } from './ui-panel.js';
+import { Buffers } from './gpu/buffers.js';
+import { RenderPipelines } from './gpu/render-pipeline.js';
+import { FrameEncoder } from './gpu/frame.js';
+import { loadSharedStructs } from './gpu/shader-loader.js';
 
 async function main() {
   const canvas = document.getElementById('canvas');
@@ -16,6 +20,17 @@ async function main() {
   console.log('WebGPU initialized',
     `${gpu.width}x${gpu.height}`,
     gpu.hasTimestampQuery ? '(timestamp-query available)' : '(no timestamp-query)');
+
+  // Preload shared structs, then create pipelines
+  await loadSharedStructs();
+
+  const buffers = new Buffers(gpu.device);
+  buffers.init(config.get('particleCount'), gpu.width, gpu.height);
+
+  const pipelines = new RenderPipelines();
+  await pipelines.init(gpu.device, gpu.format);
+
+  const frameEncoder = new FrameEncoder(gpu.device, pipelines, null, buffers);
 
   const input = new Input(canvas, config);
   const ui = new UIPanel(config);
@@ -31,25 +46,35 @@ async function main() {
     ui.toggle();
   });
 
-  // Log config changes during scaffolding phase
+  // Log config changes
   config.onChange((key, value, old) => {
     console.log(`Config: ${key} ${old} → ${value}`);
   });
 
-  // Frame loop stub — will be replaced by simulation in Phase 2+
+  // Frame loop
   let frameNumber = 0;
-  let running = true;
 
   function frame() {
-    if (!running) return;
     requestAnimationFrame(frame);
 
     if (input.paused) return;
 
     const resized = gpu.handleResize();
     if (resized) {
-      console.log(`Resized to ${gpu.width}x${gpu.height}`);
+      buffers.handleResize(gpu.width, gpu.height);
+      frameEncoder.handleResize();
     }
+
+    // Upload sim params
+    const simData = config.toSimParams(
+      gpu.width, gpu.height,
+      input.mouseX, input.mouseY,
+      frameNumber,
+    );
+    buffers.uploadSimParams(simData);
+
+    // Render
+    frameEncoder.render(gpu, config.get('particleCount'));
 
     frameNumber++;
   }
@@ -57,7 +82,7 @@ async function main() {
   requestAnimationFrame(frame);
 
   // Expose for debugging
-  window.__gaseous = { config, gpu, input, ui };
+  window.__gaseous = { config, gpu, input, ui, buffers, pipelines };
 }
 
 main();
