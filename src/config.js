@@ -30,6 +30,8 @@ const PARAM_DEFS = {
   particleScale:       { value: 1.0,   min: 0.1,   max: 5.0,    step: 0.1,   category: 'visual', label: 'Particle Scale' },
   intensityFalloff:    { value: 1.5,   min: 0.0,   max: 5.0,    step: 0.1,   category: 'visual', label: 'Intensity Falloff' },
   intensityFloor:      { value: 0.03,  min: 0.01,  max: 0.5,    step: 0.01,  category: 'visual', label: 'Intensity Floor' },
+  brightnessFalloff:   { value: 1.5,   min: 0.0,   max: 5.0,    step: 0.1,   category: 'visual', label: 'Brightness Falloff' },
+  brightnessFloor:     { value: 0.05,  min: 0.01,  max: 0.5,    step: 0.01,  category: 'visual', label: 'Brightness Floor' },
   fogIntensity:        { value: 0.15,  min: 0.0,   max: 1.0,    step: 0.01,  category: 'visual', label: 'Fog Intensity' },
   fogFalloff:          { value: 4.0,   min: 0.5,   max: 10.0,   step: 0.5,   category: 'visual', label: 'Fog Falloff' },
   fogSize:             { value: 2.5,   min: 1.0,   max: 8.0,    step: 0.5,   category: 'visual', label: 'Fog Size' },
@@ -118,6 +120,8 @@ export class Config {
     f32[26] = v.fogSize;        // fog_size
     f32[27] = v.intensityFalloff; // intensity_falloff
     f32[28] = v.intensityFloor;   // intensity_floor
+    f32[29] = v.brightnessFalloff; // brightness_falloff
+    f32[30] = v.brightnessFloor;   // brightness_floor
 
     return buf;
   }
