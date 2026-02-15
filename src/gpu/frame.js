@@ -41,6 +41,11 @@ export class FrameEncoder {
     }
   }
 
+  /** Rebuild background bind group after pipeline recreation (theme switch) */
+  rebuildBgBindGroup() {
+    this.#bgBindGroup = this.pipelines.createBackgroundBindGroup(this.#bgParamsBuffer);
+  }
+
   /** Encode and submit one frame */
   render(gpu, particleCount, binCount, runHomogeneity = false, ballCount = 0) {
     if (this.computePipelines && this.computeBindGroups) {
@@ -237,15 +242,16 @@ export class FrameEncoder {
 
   #uploadBgParams(width, height) {
     const theme = getActiveTheme();
+    const sp = theme.background.shaderParams;
     const buf = new Float32Array(8);
     buf[0] = width;
     buf[1] = height;
-    buf[2] = theme.background.starDensity;
-    buf[3] = theme.background.starBrightness;
-    buf[4] = theme.background.nebulaGlow;
+    buf[2] = sp[0] || 0;   // theme-specific param 0
+    buf[3] = sp[1] || 0;   // theme-specific param 1
+    buf[4] = sp[2] || 0;   // theme-specific param 2
     buf[5] = (performance.now() - this.#startTime) / 1000; // time
-    buf[6] = 0;       // pad
-    buf[7] = 0;       // pad
+    buf[6] = sp[3] || 0;   // theme-specific param 3
+    buf[7] = sp[4] || 0;   // theme-specific param 4
     this.#device.queue.writeBuffer(this.#bgParamsBuffer, 0, buf);
   }
 
