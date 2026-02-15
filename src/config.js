@@ -29,8 +29,8 @@ const PARAM_DEFS = {
   // Visual
   particleScale:       { value: 1.0,   min: 0.1,   max: 5.0,    step: 0.1,   category: 'visual', label: 'Particle Scale' },
   fogIntensity:        { value: 0.15,  min: 0.0,   max: 1.0,    step: 0.01,  category: 'visual', label: 'Fog Intensity' },
-  fogFalloff:          { value: 3.0,   min: 0.5,   max: 10.0,   step: 0.5,   category: 'visual', label: 'Fog Falloff' },
-  fogSize:             { value: 5.0,   min: 1.0,   max: 15.0,   step: 0.5,   category: 'visual', label: 'Fog Size' },
+  fogFalloff:          { value: 4.0,   min: 0.5,   max: 10.0,   step: 0.5,   category: 'visual', label: 'Fog Falloff' },
+  fogSize:             { value: 2.5,   min: 1.0,   max: 8.0,    step: 0.5,   category: 'visual', label: 'Fog Size' },
   theme:               { value: 'nebula',                                      category: 'visual', label: 'Theme' },
 };
 
