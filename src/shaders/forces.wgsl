@@ -7,22 +7,8 @@
 @group(0) @binding(3) var<storage, read> bin_counts : array<u32>;
 @group(0) @binding(4) var<storage, read> balls : array<BallData>;
 
-const PI : f32 = 3.14159265359;
 const SHED_THRESHOLD : f32 = 0.1;
-const SOFTENING : f32 = 100.0;  // Gravity softening (pixels^2)
-
-// Spiky kernel gradient: -45/(PI*h^6) * (h-r)^2 * (r_vec/r)
-fn grad_spiky(diff: vec2<f32>, r: f32, h: f32) -> vec2<f32> {
-    if (r >= h || r < 0.001) { return vec2(0.0); }
-    let coeff = -45.0 / (PI * pow(h, 6.0)) * pow(h - r, 2.0);
-    return coeff * diff / r;
-}
-
-// Viscosity kernel Laplacian: 45/(PI*h^6) * (h-r)
-fn lap_viscosity(r: f32, h: f32) -> f32 {
-    if (r >= h) { return 0.0; }
-    return 45.0 / (PI * pow(h, 6.0)) * (h - r);
-}
+const SOFTENING : f32 = 100.0;
 
 @compute @workgroup_size(64)
 fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
@@ -35,15 +21,20 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
     let pos = p.pos_vel.xy;
     let vel = p.pos_vel.zw;
     let h = params.sph_radius;
+    let h2 = params.sph_radius_sq;
     let my_density = max(p.color_density.w, 0.001);
     let my_pressure = p.pressure;
     let my_ball = p.ball_id;
+    let spiky_scale = params.spiky_scale;  // -45/(PI*h^6), precomputed
+    let visc_scale = params.visc_scale;    // 45/(PI*h^6), precomputed
+    let fade = params.fade_alpha;
 
     var force = vec2(0.0);
 
     // --- SPH forces: pressure + viscosity from neighbors ---
-    let cx = clamp(u32(pos.x / params.bin_size), 0u, params.bins_x - 1u);
-    let cy = clamp(u32(pos.y / params.bin_size), 0u, params.bins_y - 1u);
+    let inv_bs = params.inv_bin_size;
+    let cx = clamp(u32(pos.x * inv_bs), 0u, params.bins_x - 1u);
+    let cy = clamp(u32(pos.y * inv_bs), 0u, params.bins_y - 1u);
 
     let min_cx = select(0u, cx - 1u, cx > 0u);
     let min_cy = select(0u, cy - 1u, cy > 0u);
@@ -64,39 +55,42 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
                 if ((q.flags & 1u) == 0u) { continue; }
 
                 let diff = pos - q.pos_vel.xy;
-                let r = length(diff);
+                let r2 = dot(diff, diff);
+                if (r2 >= h2 || r2 < 0.000001) { continue; }
 
-                if (r >= h) { continue; }
-
+                let r = sqrt(r2);
                 let q_density = max(q.color_density.w, 0.001);
+                let h_minus_r = h - r;
 
-                // Pressure force (Spiky kernel)
+                // Pressure force: spiky_scale * (h-r)^2 * (diff/r)
+                let spiky_grad = spiky_scale * h_minus_r * h_minus_r * diff / r;
                 let f_pressure = -(my_pressure + q.pressure) /
-                    (2.0 * q_density) * grad_spiky(diff, r, h);
-                force += f_pressure * params.fade_alpha;
+                    (2.0 * q_density) * spiky_grad;
 
-                // Viscosity force
+                // Viscosity force: visc_scale * (h-r)
+                let lap_v = visc_scale * h_minus_r;
                 let f_visc = params.viscosity_param * (q.pos_vel.zw - vel) /
-                    q_density * lap_viscosity(r, h);
-                force += f_visc * params.fade_alpha;
+                    q_density * lap_v;
+
+                force += (f_pressure + f_visc) * fade;
             }
         }
     }
 
-    // --- Central attractor force (unscaled — holds particles during spawn) ---
+    // --- Central attractor force (holds particles during spawn) ---
     if (my_ball < params.ball_count) {
         let ball = balls[my_ball];
         let to_center = ball.pos - pos;
-        let dist = max(length(to_center), 1.0);
-        let attractor_force = p.attractor_str * normalize(to_center) *
-            params.attractor_base / dist;
+        let dist2 = dot(to_center, to_center);
+        let dist = max(sqrt(dist2), 1.0);
+        // to_center / dist = normalize(to_center); * 1/dist for force
+        let attractor_force = p.attractor_str * params.attractor_base *
+            to_center / (dist * dist);
         force += attractor_force;
 
-        // Attractor decay
-        p.attractor_str *= (1.0 - params.attractor_decay * params.dt);
-
-        // Tidal stripping: distance-dependent decay
-        p.attractor_str *= (1.0 - params.tidal_stripping * dist * params.dt);
+        // Combined attractor + tidal decay
+        p.attractor_str *= (1.0 - params.attractor_decay * params.dt) *
+                           (1.0 - params.tidal_stripping * dist * params.dt);
         p.attractor_str = max(p.attractor_str, 0.0);
     }
 
@@ -105,16 +99,20 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
         let ball = balls[b];
         let to_ball = ball.pos - pos;
         let dist2 = dot(to_ball, to_ball) + SOFTENING;
-        let dist = sqrt(dist2);
-        let f_grav = params.gravity_constant * ball.mass / dist2 * normalize(to_ball);
+        // Combine sqrt + normalize: to_ball / dist gives direction, / dist2 gives 1/r^2
+        let inv_dist = inverseSqrt(dist2);
+        let f_grav = params.gravity_constant * ball.mass * inv_dist * inv_dist *
+            to_ball * inv_dist;
         force += f_grav;
     }
 
     // --- Mouse interaction ---
     if (params.mouse_force > 0.001) {
         let to_mouse = vec2(params.mouse_x, params.mouse_y) - pos;
-        let mouse_dist = length(to_mouse) + 10.0;
-        force += params.mouse_force / mouse_dist * normalize(to_mouse);
+        let mouse_len = length(to_mouse);
+        let mouse_dist = mouse_len + 10.0;
+        // Original: force/dist * normalize = force/(dist*len) * vec
+        force += params.mouse_force / (mouse_dist * max(mouse_len, 0.001)) * to_mouse;
     }
 
     // --- Drag for shed particles ---

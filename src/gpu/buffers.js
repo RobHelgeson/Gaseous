@@ -53,7 +53,7 @@ export class Buffers {
     this.#createSimParamsBuffer();
     this.#createBallDataBuffer();
     this.#createBinBuffers(width, height, sphRadius);
-    this.#createPrefixParamsBuffer();
+    this.#createPrefixParamsBuffers();
     this.#createHdrTexture(width, height);
     this.#createSampler();
     this.#createHomogeneityBuffers();
@@ -166,19 +166,40 @@ export class Buffers {
     });
   }
 
-  #createPrefixParamsBuffer() {
-    if (this.prefixParamsBuffer) this.prefixParamsBuffer.destroy();
-    this.prefixParamsBuffer = this.#device.createBuffer({
-      label: 'prefixParamsBuffer',
-      size: 8, // count: u32, offset: u32
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
+  #createPrefixParamsBuffers() {
+    if (this.prefixParamsBuffers) {
+      for (const buf of this.prefixParamsBuffers) buf.destroy();
+    }
+    // Pre-allocate uniform buffers for each prefix sum iteration + make_exclusive
+    // Max iterations = ceil(log2(maxBins)) + 1 for make_exclusive
+    this.prefixParamsBuffers = [];
+    for (let i = 0; i < 17; i++) {
+      this.prefixParamsBuffers.push(this.#device.createBuffer({
+        label: `prefixParams-${i}`,
+        size: 8,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      }));
+    }
+    // Keep legacy alias for bind group creation
+    this.prefixParamsBuffer = this.prefixParamsBuffers[0];
+  }
+
+  /** Pre-fill all prefix sum uniform buffers for the current bin count */
+  preparePrefixParams(binCount) {
+    const iterations = Math.ceil(Math.log2(binCount));
+    for (let i = 0; i < iterations; i++) {
+      const buf = new Uint32Array([binCount, 1 << i]);
+      this.#device.queue.writeBuffer(this.prefixParamsBuffers[i], 0, buf);
+    }
+    // make_exclusive params (stride=0 is unused, just needs count)
+    const excBuf = new Uint32Array([binCount, 0]);
+    this.#device.queue.writeBuffer(this.prefixParamsBuffers[iterations], 0, excBuf);
   }
 
   #createSimParamsBuffer() {
     this.simParamsBuffer = this.#device.createBuffer({
       label: 'simParamsBuffer',
-      size: 128,
+      size: 160,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
   }
@@ -247,7 +268,7 @@ export class Buffers {
     this.#device.queue.writeBuffer(this.ballDataBuffer, 0, data);
   }
 
-  /** Upload prefix sum params for one iteration */
+  /** Upload prefix sum params for one iteration (legacy, used for single-buffer fallback) */
   uploadPrefixParams(count, offset) {
     const buf = new Uint32Array([count, offset]);
     this.#device.queue.writeBuffer(this.prefixParamsBuffer, 0, buf);
@@ -282,7 +303,9 @@ export class Buffers {
     this.binCountBuffer?.destroy();
     this.binOffsetBufferA?.destroy();
     this.binOffsetBufferB?.destroy();
-    this.prefixParamsBuffer?.destroy();
+    if (this.prefixParamsBuffers) {
+      for (const buf of this.prefixParamsBuffers) buf.destroy();
+    }
     this.ballDataBuffer?.destroy();
     this.homogCellBuffer?.destroy();
     this.homogResultBuffer?.destroy();
