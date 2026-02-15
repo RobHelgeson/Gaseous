@@ -5,7 +5,6 @@
 @group(0) @binding(0) var<storage, read_write> particles : array<Particle>;
 @group(0) @binding(1) var<uniform> params : SimParams;
 
-const BOUNCE_DAMPING : f32 = 0.7;
 const SHED_THRESHOLD : f32 = 0.1;
 
 @compute @workgroup_size(64)
@@ -25,17 +24,17 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
         // Bound particles: damped bounce off walls
         if (new_pos.x < 0.0) {
             new_pos.x = -new_pos.x;
-            vel.x = abs(vel.x) * BOUNCE_DAMPING;
+            vel.x = abs(vel.x) * params.bounce_damping;
         } else if (new_pos.x > params.canvas_width) {
             new_pos.x = 2.0 * params.canvas_width - new_pos.x;
-            vel.x = -abs(vel.x) * BOUNCE_DAMPING;
+            vel.x = -abs(vel.x) * params.bounce_damping;
         }
         if (new_pos.y < 0.0) {
             new_pos.y = -new_pos.y;
-            vel.y = abs(vel.y) * BOUNCE_DAMPING;
+            vel.y = abs(vel.y) * params.bounce_damping;
         } else if (new_pos.y > params.canvas_height) {
             new_pos.y = 2.0 * params.canvas_height - new_pos.y;
-            vel.y = -abs(vel.y) * BOUNCE_DAMPING;
+            vel.y = -abs(vel.y) * params.bounce_damping;
         }
     } else {
         // Shed particles: toroidal wrap

@@ -32,6 +32,7 @@ struct SimParams {
     particle_scale: f32,
     fade_alpha: f32,
     attractor_decay: f32,
+    bounce_damping: f32,
 };
 
 struct BallData {

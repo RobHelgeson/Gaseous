@@ -103,6 +103,7 @@ export class Config {
     f32[19] = v.particleScale;    // particle_scale
     f32[20] = fadeAlpha;          // fade_alpha
     f32[21] = v.attractorDecay;   // attractor_decay
+    f32[22] = v.bounceDamping;   // bounce_damping
 
     return buf;
   }
