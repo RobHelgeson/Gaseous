@@ -1,4 +1,4 @@
-// frame.js — Per-frame command encoding: compute -> background -> particles -> tonemap
+// frame.js — Per-frame command encoding: spatial hash -> integrate -> render
 
 export class FrameEncoder {
   /** @type {GPUDevice} */
@@ -31,38 +31,132 @@ export class FrameEncoder {
     }
   }
 
-  /** Recreate bind groups after HDR texture resize */
-  handleResize() {
+  /** Recreate bind groups after resize or buffer recreation */
+  rebuildBindGroups() {
     this.bindGroups = this.pipelines.createBindGroups(this.buffers);
+    if (this.computePipelines) {
+      this.computeBindGroups = this.computePipelines.createBindGroups(this.buffers);
+    }
   }
 
   /** Encode and submit one frame */
-  render(gpu, particleCount) {
-    const swapTexture = gpu.ctx.getCurrentTexture();
-    const swapView = swapTexture.createView();
-    const encoder = this.#device.createCommandEncoder({ label: 'frame' });
-
-    // Compute: integrate particles
+  render(gpu, particleCount, binCount) {
     if (this.computePipelines && this.computeBindGroups) {
-      this.#runCompute(encoder, particleCount);
+      // Spatial hashing requires multiple submits for prefix sum uniform updates
+      this.#runSpatialHash(particleCount, binCount);
+
+      // Sort->main copy + integrate + render in one command buffer
+      const encoder = this.#device.createCommandEncoder({ label: 'frame' });
+
+      encoder.copyBufferToBuffer(
+        this.buffers.particleSortBuffer, 0,
+        this.buffers.particleBuffer, 0,
+        particleCount * 48,
+      );
+      this.#runIntegrate(encoder, particleCount);
+
+      this.#uploadBgParams(gpu.width, gpu.height);
+      this.#renderBackground(encoder);
+      this.#renderParticles(encoder, particleCount);
+      this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
+
+      this.#device.queue.submit([encoder.finish()]);
+    } else {
+      const encoder = this.#device.createCommandEncoder({ label: 'frame' });
+      this.#uploadBgParams(gpu.width, gpu.height);
+      this.#renderBackground(encoder);
+      this.#renderParticles(encoder, particleCount);
+      this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
+      this.#device.queue.submit([encoder.finish()]);
     }
-
-    // Upload background params
-    this.#uploadBgParams(gpu.width, gpu.height);
-
-    // Render pass 1: Background -> HDR texture
-    this.#renderBackground(encoder);
-
-    // Render pass 2: Particles -> HDR texture (additive)
-    this.#renderParticles(encoder, particleCount);
-
-    // Render pass 3: Tonemap -> swap chain
-    this.#renderTonemap(encoder, swapView);
-
-    this.#device.queue.submit([encoder.finish()]);
   }
 
-  #runCompute(encoder, particleCount) {
+  #runSpatialHash(particleCount, binCount) {
+    const bg = this.computeBindGroups;
+    const cp = this.computePipelines;
+    const wgParticles = Math.ceil(particleCount / 64);
+    const wgBins = Math.ceil(binCount / 64);
+
+    // 1-2. Clear bins + count particles (single submit)
+    {
+      const enc = this.#device.createCommandEncoder({ label: 'hash-count' });
+
+      const clear = enc.beginComputePass({ label: 'clear-bins' });
+      clear.setPipeline(cp.clearBinsPipeline);
+      clear.setBindGroup(0, bg.clearBinsBG);
+      clear.dispatchWorkgroups(wgBins);
+      clear.end();
+
+      const count = enc.beginComputePass({ label: 'count-bins' });
+      count.setPipeline(cp.countBinsPipeline);
+      count.setBindGroup(0, bg.countBinsBG);
+      count.dispatchWorkgroups(wgParticles);
+      count.end();
+
+      // Copy bin counts to offset buffer A as prefix sum input
+      enc.copyBufferToBuffer(
+        this.buffers.binCountBuffer, 0,
+        this.buffers.binOffsetBufferA, 0,
+        binCount * 4,
+      );
+
+      this.#device.queue.submit([enc.finish()]);
+    }
+
+    // 3. Prefix sum iterations (each needs its own submit for uniform update)
+    const iterations = Math.ceil(Math.log2(binCount));
+    let readFromA = true;
+
+    for (let i = 0; i < iterations; i++) {
+      this.buffers.uploadPrefixParams(binCount, 1 << i);
+
+      const enc = this.#device.createCommandEncoder({ label: `prefix-${i}` });
+      const pass = enc.beginComputePass({ label: `prefix-sum-${i}` });
+      pass.setPipeline(cp.prefixSumPipeline);
+      pass.setBindGroup(0, readFromA ? bg.prefixSumAB : bg.prefixSumBA);
+      pass.dispatchWorkgroups(wgBins);
+      pass.end();
+      this.#device.queue.submit([enc.finish()]);
+
+      readFromA = !readFromA;
+    }
+
+    // 4. Convert inclusive to exclusive prefix sum
+    {
+      this.buffers.uploadPrefixParams(binCount, 0);
+
+      const enc = this.#device.createCommandEncoder({ label: 'make-exclusive' });
+      const pass = enc.beginComputePass({ label: 'make-exclusive' });
+      pass.setPipeline(cp.makeExclusivePipeline);
+      pass.setBindGroup(0, readFromA ? bg.prefixSumAB : bg.prefixSumBA);
+      pass.dispatchWorkgroups(wgBins);
+      pass.end();
+      this.#device.queue.submit([enc.finish()]);
+
+      readFromA = !readFromA;
+    }
+
+    // 5-6. Clear bin counts (for sort atomics) + sort particles
+    {
+      const enc = this.#device.createCommandEncoder({ label: 'sort' });
+
+      const clear = enc.beginComputePass({ label: 'clear-bins-for-sort' });
+      clear.setPipeline(cp.clearBinsPipeline);
+      clear.setBindGroup(0, bg.clearBinsBG);
+      clear.dispatchWorkgroups(wgBins);
+      clear.end();
+
+      const sort = enc.beginComputePass({ label: 'sort-particles' });
+      sort.setPipeline(cp.sortPipeline);
+      sort.setBindGroup(0, readFromA ? bg.sortBG_A : bg.sortBG_B);
+      sort.dispatchWorkgroups(wgParticles);
+      sort.end();
+
+      this.#device.queue.submit([enc.finish()]);
+    }
+  }
+
+  #runIntegrate(encoder, particleCount) {
     const pass = encoder.beginComputePass({ label: 'integrate' });
     pass.setPipeline(this.computePipelines.integratePipeline);
     pass.setBindGroup(0, this.computeBindGroups.integrateBG);
@@ -95,7 +189,7 @@ export class FrameEncoder {
     });
     pass.setPipeline(this.pipelines.backgroundPipeline);
     pass.setBindGroup(0, this.#bgBindGroup);
-    pass.draw(3); // fullscreen triangle
+    pass.draw(3);
     pass.end();
   }
 
@@ -104,13 +198,13 @@ export class FrameEncoder {
       label: 'particles',
       colorAttachments: [{
         view: this.buffers.hdrView,
-        loadOp: 'load', // preserve background
+        loadOp: 'load',
         storeOp: 'store',
       }],
     });
     pass.setPipeline(this.pipelines.particlePipeline);
     pass.setBindGroup(0, this.bindGroups.particleBG);
-    pass.draw(6, particleCount); // 6 verts per quad, instanced
+    pass.draw(6, particleCount);
     pass.end();
   }
 
@@ -126,7 +220,7 @@ export class FrameEncoder {
     });
     pass.setPipeline(this.pipelines.tonemapPipeline);
     pass.setBindGroup(0, this.bindGroups.tonemapBG);
-    pass.draw(3); // fullscreen triangle
+    pass.draw(3);
     pass.end();
   }
 

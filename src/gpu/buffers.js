@@ -18,7 +18,17 @@ export class Buffers {
   /** @type {GPUBuffer} */
   particleBuffer = null;
   /** @type {GPUBuffer} */
+  particleSortBuffer = null;
+  /** @type {GPUBuffer} */
   simParamsBuffer = null;
+  /** @type {GPUBuffer} */
+  binCountBuffer = null;
+  /** @type {GPUBuffer} */
+  binOffsetBufferA = null;
+  /** @type {GPUBuffer} */
+  binOffsetBufferB = null;
+  /** @type {GPUBuffer} */
+  prefixParamsBuffer = null;
   /** @type {GPUTexture} */
   hdrTexture = null;
   /** @type {GPUTextureView} */
@@ -29,15 +39,19 @@ export class Buffers {
   #width = 0;
   #height = 0;
   #particleCount = 0;
+  #binCount = 0;
 
   constructor(device) {
     this.#device = device;
   }
 
-  init(particleCount, width, height) {
+  init(particleCount, width, height, sphRadius) {
     this.#particleCount = particleCount;
     this.#createParticleBuffer(particleCount, width, height);
+    this.#createSortBuffer(particleCount);
     this.#createSimParamsBuffer();
+    this.#createBinBuffers(width, height, sphRadius);
+    this.#createPrefixParamsBuffer();
     this.#createHdrTexture(width, height);
     this.#createSampler();
   }
@@ -84,6 +98,51 @@ export class Buffers {
     this.particleBuffer.unmap();
   }
 
+  #createSortBuffer(count) {
+    if (this.particleSortBuffer) this.particleSortBuffer.destroy();
+    this.particleSortBuffer = this.#device.createBuffer({
+      label: 'particleSortBuffer',
+      size: count * PARTICLE_BYTE_SIZE,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+  }
+
+  #createBinBuffers(width, height, sphRadius) {
+    if (this.binCountBuffer) this.binCountBuffer.destroy();
+    if (this.binOffsetBufferA) this.binOffsetBufferA.destroy();
+    if (this.binOffsetBufferB) this.binOffsetBufferB.destroy();
+
+    const binsX = Math.ceil(width / sphRadius);
+    const binsY = Math.ceil(height / sphRadius);
+    this.#binCount = binsX * binsY + 1; // +1 for dead particle overflow bin
+    const byteSize = this.#binCount * 4;
+
+    this.binCountBuffer = this.#device.createBuffer({
+      label: 'binCountBuffer',
+      size: byteSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    this.binOffsetBufferA = this.#device.createBuffer({
+      label: 'binOffsetBufferA',
+      size: byteSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    });
+    this.binOffsetBufferB = this.#device.createBuffer({
+      label: 'binOffsetBufferB',
+      size: byteSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    });
+  }
+
+  #createPrefixParamsBuffer() {
+    if (this.prefixParamsBuffer) this.prefixParamsBuffer.destroy();
+    this.prefixParamsBuffer = this.#device.createBuffer({
+      label: 'prefixParamsBuffer',
+      size: 8, // count: u32, offset: u32
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+  }
+
   #createSimParamsBuffer() {
     this.simParamsBuffer = this.#device.createBuffer({
       label: 'simParamsBuffer',
@@ -114,10 +173,11 @@ export class Buffers {
     });
   }
 
-  /** Recreate HDR texture on resize. Returns true if resized. */
-  handleResize(width, height) {
+  /** Recreate HDR texture and bin buffers on resize. Returns true if resized. */
+  handleResize(width, height, sphRadius) {
     if (width === this.#width && height === this.#height) return false;
     this.#createHdrTexture(width, height);
+    this.#createBinBuffers(width, height, sphRadius);
     return true;
   }
 
@@ -126,11 +186,23 @@ export class Buffers {
     this.#device.queue.writeBuffer(this.simParamsBuffer, 0, data);
   }
 
+  /** Upload prefix sum params for one iteration */
+  uploadPrefixParams(count, offset) {
+    const buf = new Uint32Array([count, offset]);
+    this.#device.queue.writeBuffer(this.prefixParamsBuffer, 0, buf);
+  }
+
   get particleCount() { return this.#particleCount; }
+  get binCount() { return this.#binCount; }
 
   destroy() {
     this.particleBuffer?.destroy();
+    this.particleSortBuffer?.destroy();
     this.simParamsBuffer?.destroy();
+    this.binCountBuffer?.destroy();
+    this.binOffsetBufferA?.destroy();
+    this.binOffsetBufferB?.destroy();
+    this.prefixParamsBuffer?.destroy();
     this.hdrTexture?.destroy();
   }
 }

@@ -26,7 +26,7 @@ async function main() {
   await loadSharedStructs();
 
   const buffers = new Buffers(gpu.device);
-  buffers.init(config.get('particleCount'), gpu.width, gpu.height);
+  buffers.init(config.get('particleCount'), gpu.width, gpu.height, config.get('sphRadius'));
 
   const renderPipelines = new RenderPipelines();
   const computePipelines = new ComputePipelines();
@@ -66,8 +66,8 @@ async function main() {
 
     const resized = gpu.handleResize();
     if (resized) {
-      buffers.handleResize(gpu.width, gpu.height);
-      frameEncoder.handleResize();
+      buffers.handleResize(gpu.width, gpu.height, config.get('sphRadius'));
+      frameEncoder.rebuildBindGroups();
     }
 
     // Upload sim params
@@ -79,7 +79,7 @@ async function main() {
     buffers.uploadSimParams(simData);
 
     // Render
-    frameEncoder.render(gpu, config.get('particleCount'));
+    frameEncoder.render(gpu, config.get('particleCount'), buffers.binCount);
 
     frameNumber++;
   }
