@@ -1,0 +1,69 @@
+{
+  "id": "nebula",
+  "name": "Nebula",
+
+  "colors": {
+    "palette": [
+      [0.9, 0.2, 0.4],
+      [0.2, 0.4, 0.9],
+      [0.1, 0.8, 0.5],
+      [0.8, 0.3, 0.9],
+      [0.9, 0.7, 0.1],
+      [0.1, 0.7, 0.9]
+    ],
+    "mixMode": "additive"
+  },
+
+  "rendering": {
+    "fragmentShader": "src/shaders/nebula-fragment.wgsl",
+    "backgroundShader": "src/shaders/nebula-background.wgsl",
+    "blendState": {
+      "particle": {
+        "color": { "srcFactor": "one", "dstFactor": "one", "operation": "add" },
+        "alpha": { "srcFactor": "one", "dstFactor": "one", "operation": "add" }
+      },
+      "fog": {
+        "color": { "srcFactor": "one", "dstFactor": "one", "operation": "add" },
+        "alpha": { "srcFactor": "one", "dstFactor": "one", "operation": "add" }
+      }
+    }
+  },
+
+  "background": {
+    "clearColor": [0.01, 0.005, 0.02, 1.0],
+    "shaderParams": [0.003, 0.8, 0.15, 0, 0]
+  },
+
+  "physics": {
+    "sphRadius": 25.0,
+    "restDensity": 1.0,
+    "gasConstant": 200.0,
+    "viscosity": 50.0,
+    "attractorBase": 800.0,
+    "attractorDecay": 0.005,
+    "tidalStripping": 0.002,
+    "gravityConstant": 100.0,
+    "ballGravity": 400.0,
+    "dragCoefficient": 0.01,
+    "bounceDamping": 0.7
+  },
+
+  "visual": {
+    "particleScale": 1.0,
+    "intensityFalloff": 1.5,
+    "intensityFloor": 0.03,
+    "brightnessFalloff": 1.5,
+    "brightnessFloor": 0.05,
+    "fogIntensity": 0.15,
+    "fogFalloff": 4.0,
+    "fogSize": 2.5,
+    "glowFalloff": 2.5
+  },
+
+  "cycle": {
+    "ballCount": 3,
+    "fadeInDuration": 2.0,
+    "fadeOutDuration": 3.0,
+    "transitionStyle": "sequential"
+  }
+}

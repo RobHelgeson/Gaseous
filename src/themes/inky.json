@@ -1,0 +1,69 @@
+{
+  "id": "inky",
+  "name": "Inky",
+
+  "colors": {
+    "palette": [
+      [0.05, 0.15, 0.55],
+      [0.6, 0.05, 0.1],
+      [0.0, 0.3, 0.15],
+      [0.5, 0.3, 0.0],
+      [0.3, 0.05, 0.45],
+      [0.0, 0.3, 0.35]
+    ],
+    "mixMode": "subtractive"
+  },
+
+  "rendering": {
+    "fragmentShader": "src/shaders/inky-fragment.wgsl",
+    "backgroundShader": "src/shaders/inky-background.wgsl",
+    "blendState": {
+      "particle": {
+        "color": { "srcFactor": "one", "dstFactor": "one-minus-src-alpha", "operation": "add" },
+        "alpha": { "srcFactor": "one", "dstFactor": "one-minus-src-alpha", "operation": "add" }
+      },
+      "fog": {
+        "color": { "srcFactor": "one", "dstFactor": "one-minus-src-alpha", "operation": "add" },
+        "alpha": { "srcFactor": "one", "dstFactor": "one-minus-src-alpha", "operation": "add" }
+      }
+    }
+  },
+
+  "background": {
+    "clearColor": [0.96, 0.94, 0.91, 1.0],
+    "shaderParams": [0.015, 0.03, 0.02, 0, 0]
+  },
+
+  "physics": {
+    "sphRadius": 30.0,
+    "restDensity": 1.5,
+    "gasConstant": 100.0,
+    "viscosity": 200.0,
+    "attractorBase": 600.0,
+    "attractorDecay": 0.003,
+    "tidalStripping": 0.0015,
+    "gravityConstant": 50.0,
+    "ballGravity": 200.0,
+    "dragCoefficient": 0.04,
+    "bounceDamping": 0.5
+  },
+
+  "visual": {
+    "particleScale": 1.8,
+    "intensityFalloff": 0.6,
+    "intensityFloor": 0.1,
+    "brightnessFalloff": 0.4,
+    "brightnessFloor": 0.2,
+    "fogIntensity": 0.1,
+    "fogFalloff": 3.0,
+    "fogSize": 3.5,
+    "glowFalloff": 1.5
+  },
+
+  "cycle": {
+    "ballCount": 3,
+    "fadeInDuration": 3.0,
+    "fadeOutDuration": 5.0,
+    "transitionStyle": "sequential"
+  }
+}
