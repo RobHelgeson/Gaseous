@@ -107,7 +107,7 @@ async function main() {
     cycleManager.update(1 / 60);
 
     // Update ball positions
-    ballManager.update(1 / 60, config.get('bounceDamping'));
+    ballManager.update(1 / 60, config.get('bounceDamping'), config.get('ballGravity'));
 
     // Adaptive particle count (dispatch size only, buffers stay at ceiling)
     gpuTiming.update();

@@ -12,7 +12,8 @@ const PARAM_DEFS = {
   viscosity:           { value: 50.0,  min: 0.0,   max: 500.0,  step: 5.0,   category: 'physics', label: 'Viscosity' },
   attractorBase:       { value: 500.0, min: 0.0,   max: 2000.0, step: 10.0,  category: 'physics', label: 'Attractor Base' },
   attractorDecay:      { value: 0.02,  min: 0.001, max: 0.1,    step: 0.001, category: 'physics', label: 'Attractor Decay' },
-  gravityConstant:     { value: 100.0, min: 0.0,   max: 1000.0, step: 10.0,  category: 'physics', label: 'Gravity' },
+  gravityConstant:     { value: 100.0, min: 0.0,   max: 1000.0, step: 10.0,  category: 'physics', label: 'Particle Gravity' },
+  ballGravity:         { value: 400.0, min: 0.0,   max: 5000.0, step: 50.0,  category: 'physics', label: 'Ball Gravity' },
   dragCoefficient:     { value: 0.01,  min: 0.0,   max: 0.1,    step: 0.005, category: 'physics', label: 'Drag' },
   bounceDamping:       { value: 0.7,   min: 0.1,   max: 1.0,    step: 0.05,  category: 'physics', label: 'Bounce Damping' },
 

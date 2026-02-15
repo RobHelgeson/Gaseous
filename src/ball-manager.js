@@ -4,6 +4,7 @@ import { getActiveTheme } from './themes/theme-registry.js';
 
 const MAX_BALLS = 5;
 const BALL_BYTE_SIZE = 48; // matches BallData struct: 2+2+3+1+1+1+1+1 = 12 floats
+const SOFTENING = 10000;   // gravity softening (pixels^2) to prevent singularities
 
 export class BallManager {
   #balls = [];
@@ -66,7 +67,7 @@ export class BallManager {
         x, y, vx, vy,
         color: shuffled[i % shuffled.length],
         attractorStrength: 1.0,
-        mass: particlesPerBall * 0.5,
+        mass: particlesPerBall * 2.0,
         radius,
         particleStart: i * particlesPerBall,
         particleCount: particlesPerBall,
@@ -74,8 +75,27 @@ export class BallManager {
     }
   }
 
-  /** Step ball positions (Euler + wall bounce) */
-  update(dt, bounceDamping) {
+  /** Step ball positions (Euler + inter-ball gravity + wall bounce) */
+  update(dt, bounceDamping, gravityConstant) {
+    // Inter-ball gravity
+    for (let i = 0; i < this.#balls.length; i++) {
+      const a = this.#balls[i];
+      for (let j = i + 1; j < this.#balls.length; j++) {
+        const b = this.#balls[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist2 = dx * dx + dy * dy + SOFTENING;
+        const dist = Math.sqrt(dist2);
+        const f = gravityConstant / (dist2 * dist);
+        const fx = f * dx;
+        const fy = f * dy;
+        a.vx += fx * b.mass * dt;
+        a.vy += fy * b.mass * dt;
+        b.vx -= fx * a.mass * dt;
+        b.vy -= fy * a.mass * dt;
+      }
+    }
+
     for (const b of this.#balls) {
       b.x += b.vx * dt;
       b.y += b.vy * dt;
