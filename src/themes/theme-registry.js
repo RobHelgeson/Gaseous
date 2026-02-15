@@ -42,3 +42,19 @@ export function setActiveTheme(id) {
 export function listThemes() {
   return [...themes.keys()];
 }
+
+/** Return { displayName: id } map for UI dropdowns */
+export function getThemeNames() {
+  const names = {};
+  for (const [id, theme] of themes) {
+    names[theme.name] = id;
+  }
+  return names;
+}
+
+/** Return the next theme id after the given one (wraps around) */
+export function nextThemeId(currentId) {
+  const ids = [...themes.keys()];
+  const idx = ids.indexOf(currentId);
+  return ids[(idx + 1) % ids.length];
+}
