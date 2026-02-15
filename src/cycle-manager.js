@@ -29,15 +29,17 @@ export class CycleManager {
     const theme = getActiveTheme().cycle;
 
     switch (this.#state) {
-      case 'SPAWNING':
-        // Fade in new particles
-        this.#fadeAlpha = Math.min(this.#timer / theme.fadeInDuration, 1.0);
+      case 'SPAWNING': {
+        // Cubic ease-in: forces stay near zero early, ramp up late
+        const t = Math.min(this.#timer / theme.fadeInDuration, 1.0);
+        this.#fadeAlpha = t * t * t;
         if (this.#timer >= theme.fadeInDuration) {
           this.#state = 'ACTIVE';
           this.#timer = 0;
           this.#fadeAlpha = 1.0;
         }
         break;
+      }
 
       case 'ACTIVE':
         this.#fadeAlpha = 1.0;

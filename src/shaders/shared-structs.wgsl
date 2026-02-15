@@ -33,6 +33,7 @@ struct SimParams {
     fade_alpha: f32,
     attractor_decay: f32,
     bounce_damping: f32,
+    tidal_stripping: f32,
 };
 
 struct BallData {

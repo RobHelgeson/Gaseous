@@ -29,39 +29,40 @@ export class BallManager {
     const shuffled = [...palette].sort(() => Math.random() - 0.5);
 
     for (let i = 0; i < ballCount; i++) {
-      // Spawn along edges with inward velocity
+      const radius = Math.sqrt(area / ballCount) * scaleFactor;
+      const margin = radius + 10;
+
+      // Spawn along edges with inward velocity, offset by radius so disk fits on screen
       const edge = Math.floor(Math.random() * 4);
       let x, y, vx, vy;
       const speed = 80 + Math.random() * 60;
 
       switch (edge) {
         case 0: // top
-          x = Math.random() * this.#canvasW;
-          y = 50;
+          x = margin + Math.random() * (this.#canvasW - 2 * margin);
+          y = margin;
           vx = (Math.random() - 0.5) * speed;
           vy = speed;
           break;
         case 1: // bottom
-          x = Math.random() * this.#canvasW;
-          y = this.#canvasH - 50;
+          x = margin + Math.random() * (this.#canvasW - 2 * margin);
+          y = this.#canvasH - margin;
           vx = (Math.random() - 0.5) * speed;
           vy = -speed;
           break;
         case 2: // left
-          x = 50;
-          y = Math.random() * this.#canvasH;
+          x = margin;
+          y = margin + Math.random() * (this.#canvasH - 2 * margin);
           vx = speed;
           vy = (Math.random() - 0.5) * speed;
           break;
         default: // right
-          x = this.#canvasW - 50;
-          y = Math.random() * this.#canvasH;
+          x = this.#canvasW - margin;
+          y = margin + Math.random() * (this.#canvasH - 2 * margin);
           vx = -speed;
           vy = (Math.random() - 0.5) * speed;
           break;
       }
-
-      const radius = Math.sqrt(area / ballCount) * scaleFactor;
 
       this.#balls.push({
         x, y, vx, vy,

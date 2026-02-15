@@ -3,15 +3,16 @@
 const PARAM_DEFS = {
   // Simulation
   particleCount:       { value: 50000, min: 1000,  max: 200000, step: 1000,  category: 'simulation', label: 'Particles' },
-  adaptiveParticles:   { value: true,                                         category: 'simulation', label: 'Adaptive' },
+  adaptiveParticles:   { value: false,                                        category: 'simulation', label: 'Adaptive' },
 
   // Physics
   sphRadius:           { value: 25.0,  min: 5.0,   max: 100.0,  step: 1.0,   category: 'physics', label: 'SPH Radius' },
   restDensity:         { value: 1.0,   min: 0.1,   max: 5.0,    step: 0.1,   category: 'physics', label: 'Rest Density' },
   gasConstant:         { value: 200.0, min: 10.0,  max: 2000.0, step: 10.0,  category: 'physics', label: 'Gas Constant' },
   viscosity:           { value: 50.0,  min: 0.0,   max: 500.0,  step: 5.0,   category: 'physics', label: 'Viscosity' },
-  attractorBase:       { value: 500.0, min: 0.0,   max: 2000.0, step: 10.0,  category: 'physics', label: 'Attractor Base' },
-  attractorDecay:      { value: 0.02,  min: 0.001, max: 0.1,    step: 0.001, category: 'physics', label: 'Attractor Decay' },
+  attractorBase:       { value: 800.0, min: 0.0,   max: 2000.0, step: 10.0,  category: 'physics', label: 'Attractor Base' },
+  attractorDecay:      { value: 0.005, min: 0.0,   max: 0.1,    step: 0.001, category: 'physics', label: 'Attractor Decay' },
+  tidalStripping:      { value: 0.002, min: 0.0,   max: 0.01,   step: 0.0005,category: 'physics', label: 'Tidal Stripping' },
   gravityConstant:     { value: 100.0, min: 0.0,   max: 1000.0, step: 10.0,  category: 'physics', label: 'Particle Gravity' },
   ballGravity:         { value: 400.0, min: 0.0,   max: 5000.0, step: 50.0,  category: 'physics', label: 'Ball Gravity' },
   dragCoefficient:     { value: 0.01,  min: 0.0,   max: 0.1,    step: 0.005, category: 'physics', label: 'Drag' },
@@ -105,6 +106,7 @@ export class Config {
     f32[20] = fadeAlpha;          // fade_alpha
     f32[21] = v.attractorDecay;   // attractor_decay
     f32[22] = v.bounceDamping;   // bounce_damping
+    f32[23] = v.tidalStripping;  // tidal_stripping
 
     return buf;
   }

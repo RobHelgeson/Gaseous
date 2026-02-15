@@ -9,7 +9,6 @@
 
 const PI : f32 = 3.14159265359;
 const SHED_THRESHOLD : f32 = 0.1;
-const TIDAL_FACTOR : f32 = 0.0005;
 const SOFTENING : f32 = 100.0;  // Gravity softening (pixels^2)
 
 // Spiky kernel gradient: -45/(PI*h^6) * (h-r)^2 * (r_vec/r)
@@ -74,17 +73,17 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
                 // Pressure force (Spiky kernel)
                 let f_pressure = -(my_pressure + q.pressure) /
                     (2.0 * q_density) * grad_spiky(diff, r, h);
-                force += f_pressure;
+                force += f_pressure * params.fade_alpha;
 
                 // Viscosity force
                 let f_visc = params.viscosity_param * (q.pos_vel.zw - vel) /
                     q_density * lap_viscosity(r, h);
-                force += f_visc;
+                force += f_visc * params.fade_alpha;
             }
         }
     }
 
-    // --- Central attractor force ---
+    // --- Central attractor force (unscaled — holds particles during spawn) ---
     if (my_ball < params.ball_count) {
         let ball = balls[my_ball];
         let to_center = ball.pos - pos;
@@ -97,7 +96,7 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
         p.attractor_str *= (1.0 - params.attractor_decay * params.dt);
 
         // Tidal stripping: distance-dependent decay
-        p.attractor_str *= (1.0 - TIDAL_FACTOR * dist * params.dt);
+        p.attractor_str *= (1.0 - params.tidal_stripping * dist * params.dt);
         p.attractor_str = max(p.attractor_str, 0.0);
     }
 
