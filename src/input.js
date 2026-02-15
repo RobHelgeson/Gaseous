@@ -78,6 +78,14 @@ export class Input {
         this.mouseY = t.clientY * dpr;
       }
     }, { passive: true });
+
+    // Three-finger tap toggles UI (no keyboard on mobile)
+    this.#canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 3 && this.#onToggleUI) {
+        e.preventDefault();
+        this.#onToggleUI();
+      }
+    });
   }
 
   #toggleFullscreen() {

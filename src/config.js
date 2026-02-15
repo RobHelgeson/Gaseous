@@ -28,6 +28,9 @@ const PARAM_DEFS = {
 
   // Visual
   particleScale:       { value: 1.0,   min: 0.1,   max: 5.0,    step: 0.1,   category: 'visual', label: 'Particle Scale' },
+  fogIntensity:        { value: 0.15,  min: 0.0,   max: 1.0,    step: 0.01,  category: 'visual', label: 'Fog Intensity' },
+  fogFalloff:          { value: 3.0,   min: 0.5,   max: 10.0,   step: 0.5,   category: 'visual', label: 'Fog Falloff' },
+  fogSize:             { value: 5.0,   min: 1.0,   max: 15.0,   step: 0.5,   category: 'visual', label: 'Fog Size' },
   theme:               { value: 'nebula',                                      category: 'visual', label: 'Theme' },
 };
 
@@ -108,6 +111,9 @@ export class Config {
     f32[21] = v.attractorDecay;   // attractor_decay
     f32[22] = v.bounceDamping;   // bounce_damping
     f32[23] = v.tidalStripping;  // tidal_stripping
+    f32[24] = v.fogIntensity;   // fog_intensity
+    f32[25] = v.fogFalloff;     // fog_falloff
+    f32[26] = v.fogSize;        // fog_size
 
     return buf;
   }

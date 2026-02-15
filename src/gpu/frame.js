@@ -42,7 +42,7 @@ export class FrameEncoder {
   }
 
   /** Encode and submit one frame */
-  render(gpu, particleCount, binCount, runHomogeneity = false) {
+  render(gpu, particleCount, binCount, runHomogeneity = false, ballCount = 0) {
     if (this.computePipelines && this.computeBindGroups) {
       // Spatial hashing requires multiple submits for prefix sum uniform updates
       // Returns true if exclusive prefix sum ended in buffer A
@@ -63,6 +63,7 @@ export class FrameEncoder {
 
       this.#uploadBgParams(gpu.width, gpu.height);
       this.#renderBackground(encoder);
+      this.#renderFog(encoder, ballCount);
       this.#renderParticles(encoder, particleCount);
       this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
 
@@ -76,6 +77,7 @@ export class FrameEncoder {
       const encoder = this.#device.createCommandEncoder({ label: 'frame' });
       this.#uploadBgParams(gpu.width, gpu.height);
       this.#renderBackground(encoder);
+      this.#renderFog(encoder, ballCount);
       this.#renderParticles(encoder, particleCount);
       this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
       this.#device.queue.submit([encoder.finish()]);
@@ -260,6 +262,22 @@ export class FrameEncoder {
     pass.setPipeline(this.pipelines.backgroundPipeline);
     pass.setBindGroup(0, this.#bgBindGroup);
     pass.draw(3);
+    pass.end();
+  }
+
+  #renderFog(encoder, ballCount) {
+    if (ballCount === 0) return;
+    const pass = encoder.beginRenderPass({
+      label: 'ball-fog',
+      colorAttachments: [{
+        view: this.buffers.hdrView,
+        loadOp: 'load',
+        storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(this.pipelines.fogPipeline);
+    pass.setBindGroup(0, this.bindGroups.fogBG);
+    pass.draw(6, ballCount);
     pass.end();
   }
 
