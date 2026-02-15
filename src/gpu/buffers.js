@@ -1,16 +1,8 @@
 // buffers.js — Buffer creation, HDR texture, layout definitions, resize logic
 
-const PARTICLE_BYTE_SIZE = 48; // 2 vec4 + 4 scalars
+import { getActiveTheme } from '../themes/theme-registry.js';
 
-// Nebula palette: saturated jewel tones
-const PALETTE = [
-  [0.9, 0.2, 0.4],  // Ruby
-  [0.2, 0.4, 0.9],  // Sapphire
-  [0.1, 0.8, 0.5],  // Emerald
-  [0.8, 0.3, 0.9],  // Amethyst
-  [0.9, 0.7, 0.1],  // Topaz
-  [0.1, 0.7, 0.9],  // Aquamarine
-];
+const PARTICLE_BYTE_SIZE = 48; // 2 vec4 + 4 scalars
 
 export class Buffers {
   /** @type {GPUDevice} */
@@ -100,7 +92,8 @@ export class Buffers {
         x = Math.random() * canvasW;
         y = Math.random() * canvasH;
         vx = 0; vy = 0;
-        color = PALETTE[Math.floor(Math.random() * PALETTE.length)];
+        const palette = getActiveTheme().colors.palette;
+        color = palette[Math.floor(Math.random() * palette.length)];
         ballId = 0;
       }
 

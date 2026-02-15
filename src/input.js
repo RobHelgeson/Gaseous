@@ -19,6 +19,7 @@ export class Input {
   paused = false;
 
   #cursorTimer = null;
+  #keepVisible = false;
 
   constructor(canvas, config) {
     this.#canvas = canvas;
@@ -91,8 +92,20 @@ export class Input {
     this.#resetCursorTimer();
   }
 
+  /** Prevent cursor auto-hide (e.g. while UI panel is open) */
+  setKeepCursorVisible(keep) {
+    this.#keepVisible = keep;
+    if (keep) {
+      clearTimeout(this.#cursorTimer);
+      this.#canvas.style.cursor = '';
+    } else {
+      this.#resetCursorTimer();
+    }
+  }
+
   #resetCursorTimer() {
     clearTimeout(this.#cursorTimer);
+    if (this.#keepVisible) return;
     this.#cursorTimer = setTimeout(() => {
       this.#canvas.style.cursor = 'none';
     }, CURSOR_HIDE_DELAY);

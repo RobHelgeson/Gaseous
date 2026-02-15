@@ -8,9 +8,11 @@ export class UIPanel {
   #gui;
   /** @type {Config} */
   #config;
-  #visible = true;
+  #visible = false;
   /** Proxy object that lil-gui reads/writes */
   #proxy = {};
+  /** Live performance stats (updated externally each frame) */
+  perf = { fps: 0, frameTime: 0, activeParticles: 0, cycleState: 'SPAWNING' };
 
   constructor(config) {
     this.#config = config;
@@ -21,6 +23,9 @@ export class UIPanel {
     this.#gui.domElement.style.zIndex = '1000';
 
     this.#buildFolders();
+
+    // Start hidden for screensaver feel
+    this.#gui.domElement.style.display = 'none';
   }
 
   #buildFolders() {
@@ -56,6 +61,13 @@ export class UIPanel {
     // Start with physics and cycle folders closed to reduce clutter
     if (folders.physics) folders.physics.close();
     if (folders.cycle) folders.cycle.close();
+
+    // Performance folder (read-only live stats)
+    const perf = this.#gui.addFolder('Performance');
+    perf.add(this.perf, 'fps', 0, 120, 1).name('FPS').listen().disable();
+    perf.add(this.perf, 'frameTime', 0, 50, 0.1).name('Frame ms').listen().disable();
+    perf.add(this.perf, 'activeParticles', 0, 200000, 1).name('Particles').listen().disable();
+    perf.add(this.perf, 'cycleState').name('Cycle').listen().disable();
   }
 
   toggle() {

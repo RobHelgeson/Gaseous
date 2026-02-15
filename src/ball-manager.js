@@ -1,16 +1,9 @@
 // ball-manager.js — CPU-side ball state: positions, velocities, wall bounce, GPU upload
 
+import { getActiveTheme } from './themes/theme-registry.js';
+
 const MAX_BALLS = 5;
 const BALL_BYTE_SIZE = 48; // matches BallData struct: 2+2+3+1+1+1+1+1 = 12 floats
-
-const PALETTE = [
-  [0.9, 0.2, 0.4],  // Ruby
-  [0.2, 0.4, 0.9],  // Sapphire
-  [0.1, 0.8, 0.5],  // Emerald
-  [0.8, 0.3, 0.9],  // Amethyst
-  [0.9, 0.7, 0.1],  // Topaz
-  [0.1, 0.7, 0.9],  // Aquamarine
-];
 
 export class BallManager {
   #balls = [];
@@ -31,7 +24,8 @@ export class BallManager {
     const scaleFactor = 0.15;
 
     // Shuffle palette for no-repeat color selection
-    const shuffled = [...PALETTE].sort(() => Math.random() - 0.5);
+    const palette = getActiveTheme().colors.palette;
+    const shuffled = [...palette].sort(() => Math.random() - 0.5);
 
     for (let i = 0; i < ballCount; i++) {
       // Spawn along edges with inward velocity

@@ -1,5 +1,7 @@
 // frame.js — Per-frame command encoding: spatial hash -> integrate -> render
 
+import { getActiveTheme } from '../themes/theme-registry.js';
+
 export class FrameEncoder {
   /** @type {GPUDevice} */
   #device;
@@ -232,12 +234,13 @@ export class FrameEncoder {
   }
 
   #uploadBgParams(width, height) {
+    const theme = getActiveTheme();
     const buf = new Float32Array(8);
     buf[0] = width;
     buf[1] = height;
-    buf[2] = 0.003;   // star_density
-    buf[3] = 0.8;     // star_brightness
-    buf[4] = 0.15;    // nebula_glow
+    buf[2] = theme.background.starDensity;
+    buf[3] = theme.background.starBrightness;
+    buf[4] = theme.background.nebulaGlow;
     buf[5] = (performance.now() - this.#startTime) / 1000; // time
     buf[6] = 0;       // pad
     buf[7] = 0;       // pad
@@ -249,7 +252,7 @@ export class FrameEncoder {
       label: 'background',
       colorAttachments: [{
         view: this.buffers.hdrView,
-        clearValue: [0.01, 0.005, 0.02, 1.0],
+        clearValue: getActiveTheme().background.clearColor,
         loadOp: 'clear',
         storeOp: 'store',
       }],

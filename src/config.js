@@ -70,7 +70,7 @@ export class Config {
   }
 
   /** Pack numeric params into a Float32Array for GPU upload */
-  toSimParams(canvasWidth, canvasHeight, mouseX, mouseY, frameNumber, fadeAlpha = 1.0) {
+  toSimParams(canvasWidth, canvasHeight, mouseX, mouseY, frameNumber, fadeAlpha = 1.0, activeParticleCount = null) {
     const v = this.#values;
     const binSize = v.sphRadius;
     const binsX = Math.ceil(canvasWidth / binSize);
@@ -82,7 +82,7 @@ export class Config {
     const u32 = new Uint32Array(buf);
 
     f32[0]  = 1 / 60;            // dt (fixed timestep)
-    u32[1]  = v.particleCount;    // particle_count
+    u32[1]  = activeParticleCount || v.particleCount; // particle_count (adaptive override)
     u32[2]  = v.ballCount;        // ball_count
     f32[3]  = canvasWidth;        // canvas_width
     f32[4]  = canvasHeight;       // canvas_height

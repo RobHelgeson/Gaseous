@@ -11,6 +11,7 @@ import { FrameEncoder } from './gpu/frame.js';
 import { loadSharedStructs } from './gpu/shader-loader.js';
 import { BallManager } from './ball-manager.js';
 import { CycleManager } from './cycle-manager.js';
+import { GpuTiming } from './gpu/gpu-timing.js';
 
 async function main() {
   const canvas = document.getElementById('canvas');
@@ -51,6 +52,11 @@ async function main() {
     frameEncoder.rebuildBindGroups();
   });
 
+  const gpuTiming = new GpuTiming(
+    config.get('particleCount'),
+    config.get('adaptiveParticles'),
+  );
+
   const input = new Input(canvas, config);
   const ui = new UIPanel(config);
 
@@ -63,15 +69,20 @@ async function main() {
   });
   input.onToggleUI(() => {
     ui.toggle();
+    input.setKeepCursorVisible(ui.visible);
   });
 
   // Handle config changes
   config.onChange((key, value, old) => {
     console.log(`Config: ${key} ${old} → ${value}`);
     if (key === 'particleCount') {
+      gpuTiming.setCeiling(value);
       ballManager.respawn(config.get('ballCount'), value);
       buffers.init(value, gpu.width, gpu.height, config.get('sphRadius'), ballManager);
       frameEncoder.rebuildBindGroups();
+    }
+    if (key === 'adaptiveParticles') {
+      gpuTiming.setEnabled(value);
     }
   });
 
@@ -82,6 +93,8 @@ async function main() {
     requestAnimationFrame(frame);
 
     if (input.paused) return;
+
+    gpuTiming.beginFrame();
 
     const resized = gpu.handleResize();
     if (resized) {
@@ -96,12 +109,17 @@ async function main() {
     // Update ball positions
     ballManager.update(1 / 60, config.get('bounceDamping'));
 
-    // Upload sim params (with cycle fade alpha) + ball data
+    // Adaptive particle count (dispatch size only, buffers stay at ceiling)
+    gpuTiming.update();
+    const activeCount = gpuTiming.activeParticleCount;
+
+    // Upload sim params (with cycle fade alpha + adaptive count) + ball data
     const simData = config.toSimParams(
       gpu.width, gpu.height,
       input.mouseX, input.mouseY,
       frameNumber,
       cycleManager.fadeAlpha,
+      activeCount,
     );
     buffers.uploadSimParams(simData);
     buffers.uploadBallData(ballManager.toGpuData());
@@ -110,8 +128,8 @@ async function main() {
     const runHomog = cycleManager.shouldCheckHomogeneity(frameNumber) &&
                      buffers.homogReadbackAvailable;
 
-    // Render — use buffers.particleCount to match allocated buffer sizes
-    frameEncoder.render(gpu, buffers.particleCount, buffers.binCount, runHomog);
+    // Render — dispatch activeCount but bin buffers use full allocated size
+    frameEncoder.render(gpu, activeCount, buffers.binCount, runHomog);
 
     // Async homogeneity readback (non-blocking, 1-2 frames behind)
     if (runHomog) {
@@ -120,13 +138,19 @@ async function main() {
       });
     }
 
+    // Update performance display
+    ui.perf.fps = gpuTiming.fps;
+    ui.perf.frameTime = gpuTiming.avgFrameTime;
+    ui.perf.activeParticles = activeCount;
+    ui.perf.cycleState = cycleManager.state;
+
     frameNumber++;
   }
 
   requestAnimationFrame(frame);
 
   // Expose for debugging
-  window.__gaseous = { config, gpu, input, ui, buffers, ballManager, cycleManager, renderPipelines, computePipelines };
+  window.__gaseous = { config, gpu, input, ui, buffers, ballManager, cycleManager, gpuTiming, renderPipelines, computePipelines };
 }
 
 main();
