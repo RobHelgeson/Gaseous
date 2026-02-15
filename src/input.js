@@ -13,6 +13,8 @@ export class Input {
   #onRestart = null;
   /** @type {Function|null} */
   #onToggleUI = null;
+  /** @type {Function|null} */
+  #onCycleTheme = null;
 
   mouseX = 0;
   mouseY = 0;
@@ -32,6 +34,7 @@ export class Input {
   onPause(fn) { this.#onPause = fn; }
   onRestart(fn) { this.#onRestart = fn; }
   onToggleUI(fn) { this.#onToggleUI = fn; }
+  onCycleTheme(fn) { this.#onCycleTheme = fn; }
 
   #bindKeyboard() {
     document.addEventListener('keydown', (e) => {
@@ -52,6 +55,10 @@ export class Input {
 
         case 'KeyR':
           if (this.#onRestart) this.#onRestart();
+          break;
+
+        case 'KeyT':
+          if (this.#onCycleTheme) this.#onCycleTheme();
           break;
 
         case 'Escape':
