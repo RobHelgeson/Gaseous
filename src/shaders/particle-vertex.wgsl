@@ -3,6 +3,7 @@
 
 @group(0) @binding(0) var<storage, read> particles : array<Particle>;
 @group(0) @binding(1) var<uniform> params : SimParams;
+@group(0) @binding(2) var<storage, read> balls : array<BallData>;
 
 struct VertexOut {
     @builtin(position) pos : vec4<f32>,
@@ -39,6 +40,20 @@ fn vs_main(
     }
     // Global cycle fade (spawning fade-in / fading fade-out)
     alpha *= params.fade_alpha;
+
+    // Intensity falloff: dim particles far from any ball
+    if (params.intensity_falloff > 0.0) {
+        var min_nd2 = 1e12;
+        for (var b = 0u; b < params.ball_count; b++) {
+            let bp = balls[b].pos;
+            let d = pos2d - bp;
+            let r = max(balls[b].radius, 1.0);
+            min_nd2 = min(min_nd2, dot(d, d) / (r * r));
+        }
+        let proximity = max(params.intensity_floor,
+                            exp(-min_nd2 * params.intensity_falloff * 0.1));
+        alpha *= proximity;
+    }
 
     // Quad size in pixels, scaled by particle_scale
     let size = 4.0 * params.particle_scale;
