@@ -10,6 +10,7 @@ struct VertexOut {
     @location(0) uv : vec2<f32>,
     @location(1) color : vec3<f32>,
     @location(2) alpha : f32,
+    @location(3) brightness : f32,
 };
 
 // 6 vertices for a quad (two triangles)
@@ -41,18 +42,26 @@ fn vs_main(
     // Global cycle fade (spawning fade-in / fading fade-out)
     alpha *= params.fade_alpha;
 
-    // Intensity falloff: dim particles far from any ball
-    if (params.intensity_falloff > 0.0) {
-        var min_nd2 = 1e12;
+    // Distance-based falloff: compute min normalized distance to nearest ball
+    var min_nd2 = 1e12;
+    var brightness = 1.0;
+    if (params.intensity_falloff > 0.0 || params.brightness_falloff > 0.0) {
         for (var b = 0u; b < params.ball_count; b++) {
             let bp = balls[b].pos;
             let d = pos2d - bp;
             let r = max(balls[b].radius, 1.0);
             min_nd2 = min(min_nd2, dot(d, d) / (r * r));
         }
-        let proximity = max(params.intensity_floor,
-                            exp(-min_nd2 * params.intensity_falloff * 0.1));
-        alpha *= proximity;
+        // Alpha falloff: dims overall particle contribution (fog-like)
+        if (params.intensity_falloff > 0.0) {
+            alpha *= max(params.intensity_floor,
+                         exp(-min_nd2 * params.intensity_falloff * 0.1));
+        }
+        // Brightness falloff: dims particle glow intensity
+        if (params.brightness_falloff > 0.0) {
+            brightness = max(params.brightness_floor,
+                             exp(-min_nd2 * params.brightness_falloff * 0.1));
+        }
     }
 
     // Quad size in pixels, scaled by particle_scale
@@ -70,5 +79,6 @@ fn vs_main(
     out.uv = corner * 0.5 + 0.5;
     out.color = color;
     out.alpha = alpha;
+    out.brightness = brightness;
     return out;
 }
