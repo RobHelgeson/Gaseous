@@ -35,8 +35,22 @@ const PARAM_DEFS = {
   fogIntensity:        { value: 0.15,  min: 0.0,   max: 1.0,    step: 0.01,  category: 'visual', label: 'Fog Intensity' },
   fogFalloff:          { value: 4.0,   min: 0.5,   max: 10.0,   step: 0.5,   category: 'visual', label: 'Fog Falloff' },
   fogSize:             { value: 2.5,   min: 1.0,   max: 8.0,    step: 0.5,   category: 'visual', label: 'Fog Size' },
+  glowFalloff:         { value: 2.5,   min: 0.5,   max: 8.0,    step: 0.1,   category: 'visual', label: 'Glow Falloff' },
   theme:               { value: 'nebula',                                      category: 'visual', label: 'Theme' },
 };
+
+// Parameters that are theme-owned (reset when theme changes)
+const THEME_PARAMS = new Set([
+  // physics
+  'sphRadius', 'restDensity', 'gasConstant', 'viscosity', 'attractorBase',
+  'attractorDecay', 'tidalStripping', 'gravityConstant', 'ballGravity',
+  'dragCoefficient', 'bounceDamping',
+  // visual
+  'particleScale', 'intensityFalloff', 'intensityFloor', 'brightnessFalloff',
+  'brightnessFloor', 'fogIntensity', 'fogFalloff', 'fogSize', 'glowFalloff',
+  // cycle
+  'ballCount',
+]);
 
 export class Config {
   #values = {};
@@ -74,6 +88,21 @@ export class Config {
     };
   }
 
+  /** Apply theme defaults to all theme-owned parameters */
+  applyTheme(theme) {
+    const map = {
+      ...theme.physics,
+      ...theme.visual,
+      ballCount: theme.cycle.ballCount,
+    };
+    for (const [key, val] of Object.entries(map)) {
+      if (THEME_PARAMS.has(key)) {
+        this.set(key, val);
+      }
+    }
+    this.set('theme', theme.id);
+  }
+
   /** Returns all current values as a plain object */
   snapshot() {
     return { ...this.#values };
@@ -86,7 +115,7 @@ export class Config {
     const binsX = Math.ceil(canvasWidth / binSize);
     const binsY = Math.ceil(canvasHeight / binSize);
 
-    // Must match SimParams struct layout in shared-structs.wgsl
+    // Must match SimParams struct layout in shared-structs.wgsl (32 × f32 = 128 bytes)
     const buf = new ArrayBuffer(128);
     const f32 = new Float32Array(buf);
     const u32 = new Uint32Array(buf);
@@ -122,11 +151,16 @@ export class Config {
     f32[28] = v.intensityFloor;   // intensity_floor
     f32[29] = v.brightnessFalloff; // brightness_falloff
     f32[30] = v.brightnessFloor;   // brightness_floor
+    f32[31] = v.glowFalloff;      // glow_falloff
 
     return buf;
   }
 
   static get PARAMS() {
     return PARAM_DEFS;
+  }
+
+  static get THEME_PARAMS() {
+    return THEME_PARAMS;
   }
 }

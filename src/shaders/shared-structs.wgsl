@@ -41,6 +41,7 @@ struct SimParams {
     intensity_floor: f32,
     brightness_falloff: f32,
     brightness_floor: f32,
+    glow_falloff: f32,
 };
 
 struct BallData {
