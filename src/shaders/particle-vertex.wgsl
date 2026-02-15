@@ -11,6 +11,7 @@ struct VertexOut {
     @location(1) color : vec3<f32>,
     @location(2) alpha : f32,
     @location(3) brightness : f32,
+    @location(4) glow_falloff : f32,
 };
 
 // 6 vertices for a quad (two triangles)
@@ -80,5 +81,6 @@ fn vs_main(
     out.color = color;
     out.alpha = alpha;
     out.brightness = brightness;
+    out.glow_falloff = params.glow_falloff;
     return out;
 }
