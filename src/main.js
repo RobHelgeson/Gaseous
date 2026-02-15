@@ -12,7 +12,7 @@ import { loadSharedStructs } from './gpu/shader-loader.js';
 import { BallManager } from './ball-manager.js';
 import { CycleManager } from './cycle-manager.js';
 import { GpuTiming } from './gpu/gpu-timing.js';
-import { loadThemes, getActiveTheme, setActiveTheme, getTheme } from './themes/theme-registry.js';
+import { loadThemes, getActiveTheme, setActiveTheme, getTheme, nextThemeId } from './themes/theme-registry.js';
 
 async function main() {
   const canvas = document.getElementById('canvas');
@@ -75,6 +75,10 @@ async function main() {
   input.onToggleUI(() => {
     ui.toggle();
     input.setKeepCursorVisible(ui.visible);
+  });
+  input.onCycleTheme(() => {
+    const next = nextThemeId(config.get('theme'));
+    config.set('theme', next);
   });
 
   // Handle config changes
