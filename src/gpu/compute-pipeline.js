@@ -247,25 +247,22 @@ export class ComputePipelines {
       ],
     });
 
-    // Prefix sum: A->B and B->A bind groups for ping-pong
-    const prefixSumAB = d.createBindGroup({
-      label: 'prefix-sum-ab',
-      layout: this.prefixSumBGL,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.binOffsetBufferA } },
-        { binding: 1, resource: { buffer: buffers.binOffsetBufferB } },
-        { binding: 2, resource: { buffer: buffers.prefixParamsBuffer } },
-      ],
-    });
-    const prefixSumBA = d.createBindGroup({
-      label: 'prefix-sum-ba',
-      layout: this.prefixSumBGL,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.binOffsetBufferB } },
-        { binding: 1, resource: { buffer: buffers.binOffsetBufferA } },
-        { binding: 2, resource: { buffer: buffers.prefixParamsBuffer } },
-      ],
-    });
+    // Prefix sum: per-iteration bind groups with dedicated uniform buffers
+    // Each iteration alternates A->B / B->A and uses its own prefixParamsBuffer
+    const prefixSumBGs = [];
+    const maxIter = buffers.prefixParamsBuffers.length;
+    for (let i = 0; i < maxIter; i++) {
+      const readFromA = (i % 2 === 0);
+      prefixSumBGs.push(d.createBindGroup({
+        label: `prefix-sum-${i}`,
+        layout: this.prefixSumBGL,
+        entries: [
+          { binding: 0, resource: { buffer: readFromA ? buffers.binOffsetBufferA : buffers.binOffsetBufferB } },
+          { binding: 1, resource: { buffer: readFromA ? buffers.binOffsetBufferB : buffers.binOffsetBufferA } },
+          { binding: 2, resource: { buffer: buffers.prefixParamsBuffers[i] } },
+        ],
+      }));
+    }
 
     // Sort: reuses bin_counts as atomic counters (cleared to 0 before sort)
     // bin_offsets comes from whichever buffer has the final prefix sum
@@ -352,8 +349,7 @@ export class ComputePipelines {
     return {
       clearBinsBG,
       countBinsBG,
-      prefixSumAB,
-      prefixSumBA,
+      prefixSumBGs,
       sortBG_A,
       sortBG_B,
       densityBG_A,

@@ -96,83 +96,71 @@ export class FrameEncoder {
     const wgParticles = Math.ceil(particleCount / 64);
     const wgBins = Math.ceil(binCount / 64);
 
-    // 1-2. Clear bins + count particles (single submit)
-    {
-      const enc = this.#device.createCommandEncoder({ label: 'hash-count' });
+    // Pre-fill all prefix sum uniform buffers in one batch
+    this.buffers.preparePrefixParams(binCount);
 
-      const clear = enc.beginComputePass({ label: 'clear-bins' });
-      clear.setPipeline(cp.clearBinsPipeline);
-      clear.setBindGroup(0, bg.clearBinsBG);
-      clear.dispatchWorkgroups(wgBins);
-      clear.end();
+    // Single command encoder for the entire spatial hash pipeline
+    const enc = this.#device.createCommandEncoder({ label: 'spatial-hash' });
 
-      const count = enc.beginComputePass({ label: 'count-bins' });
-      count.setPipeline(cp.countBinsPipeline);
-      count.setBindGroup(0, bg.countBinsBG);
-      count.dispatchWorkgroups(wgParticles);
-      count.end();
+    // 1. Clear bins
+    const clear = enc.beginComputePass({ label: 'clear-bins' });
+    clear.setPipeline(cp.clearBinsPipeline);
+    clear.setBindGroup(0, bg.clearBinsBG);
+    clear.dispatchWorkgroups(wgBins);
+    clear.end();
 
-      // Copy bin counts to offset buffer A as prefix sum input
-      enc.copyBufferToBuffer(
-        this.buffers.binCountBuffer, 0,
-        this.buffers.binOffsetBufferA, 0,
-        binCount * 4,
-      );
+    // 2. Count particles per bin
+    const count = enc.beginComputePass({ label: 'count-bins' });
+    count.setPipeline(cp.countBinsPipeline);
+    count.setBindGroup(0, bg.countBinsBG);
+    count.dispatchWorkgroups(wgParticles);
+    count.end();
 
-      this.#device.queue.submit([enc.finish()]);
-    }
+    // 3. Copy bin counts to offset buffer A as prefix sum input
+    enc.copyBufferToBuffer(
+      this.buffers.binCountBuffer, 0,
+      this.buffers.binOffsetBufferA, 0,
+      binCount * 4,
+    );
 
-    // 3. Prefix sum iterations (each needs its own submit for uniform update)
+    // 4. Prefix sum iterations — each uses its own bind group with pre-filled uniform
     const iterations = Math.ceil(Math.log2(binCount));
-    let readFromA = true;
-
     for (let i = 0; i < iterations; i++) {
-      this.buffers.uploadPrefixParams(binCount, 1 << i);
-
-      const enc = this.#device.createCommandEncoder({ label: `prefix-${i}` });
       const pass = enc.beginComputePass({ label: `prefix-sum-${i}` });
       pass.setPipeline(cp.prefixSumPipeline);
-      pass.setBindGroup(0, readFromA ? bg.prefixSumAB : bg.prefixSumBA);
+      pass.setBindGroup(0, bg.prefixSumBGs[i]);
       pass.dispatchWorkgroups(wgBins);
       pass.end();
-      this.#device.queue.submit([enc.finish()]);
-
-      readFromA = !readFromA;
     }
 
-    // 4. Convert inclusive to exclusive prefix sum
-    {
-      this.buffers.uploadPrefixParams(binCount, 0);
+    // 5. Convert inclusive to exclusive prefix sum
+    const excPass = enc.beginComputePass({ label: 'make-exclusive' });
+    excPass.setPipeline(cp.makeExclusivePipeline);
+    excPass.setBindGroup(0, bg.prefixSumBGs[iterations]);
+    excPass.dispatchWorkgroups(wgBins);
+    excPass.end();
 
-      const enc = this.#device.createCommandEncoder({ label: 'make-exclusive' });
-      const pass = enc.beginComputePass({ label: 'make-exclusive' });
-      pass.setPipeline(cp.makeExclusivePipeline);
-      pass.setBindGroup(0, readFromA ? bg.prefixSumAB : bg.prefixSumBA);
-      pass.dispatchWorkgroups(wgBins);
-      pass.end();
-      this.#device.queue.submit([enc.finish()]);
+    // Determine which buffer has the exclusive prefix sum result
+    // Iterations alternate A->B (even i) and B->A (odd i)
+    // make_exclusive is one more pass, so total passes = iterations + 1
+    // Even total -> result in A, odd total -> result in B
+    const readFromA = ((iterations + 1) % 2 === 0);
 
-      readFromA = !readFromA;
-    }
+    // 6. Clear bin counts (for sort atomics)
+    const clearSort = enc.beginComputePass({ label: 'clear-bins-for-sort' });
+    clearSort.setPipeline(cp.clearBinsPipeline);
+    clearSort.setBindGroup(0, bg.clearBinsBG);
+    clearSort.dispatchWorkgroups(wgBins);
+    clearSort.end();
 
-    // 5-6. Clear bin counts (for sort atomics) + sort particles
-    {
-      const enc = this.#device.createCommandEncoder({ label: 'sort' });
+    // 7. Sort particles into bins
+    const sort = enc.beginComputePass({ label: 'sort-particles' });
+    sort.setPipeline(cp.sortPipeline);
+    sort.setBindGroup(0, readFromA ? bg.sortBG_A : bg.sortBG_B);
+    sort.dispatchWorkgroups(wgParticles);
+    sort.end();
 
-      const clear = enc.beginComputePass({ label: 'clear-bins-for-sort' });
-      clear.setPipeline(cp.clearBinsPipeline);
-      clear.setBindGroup(0, bg.clearBinsBG);
-      clear.dispatchWorkgroups(wgBins);
-      clear.end();
-
-      const sort = enc.beginComputePass({ label: 'sort-particles' });
-      sort.setPipeline(cp.sortPipeline);
-      sort.setBindGroup(0, readFromA ? bg.sortBG_A : bg.sortBG_B);
-      sort.dispatchWorkgroups(wgParticles);
-      sort.end();
-
-      this.#device.queue.submit([enc.finish()]);
-    }
+    this.#device.queue.submit([enc.finish()]);
 
     return readFromA;
   }

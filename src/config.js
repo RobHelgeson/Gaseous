@@ -115,10 +115,16 @@ export class Config {
     const binsX = Math.ceil(canvasWidth / binSize);
     const binsY = Math.ceil(canvasHeight / binSize);
 
-    // Must match SimParams struct layout in shared-structs.wgsl (32 × f32 = 128 bytes)
-    const buf = new ArrayBuffer(128);
+    // Must match SimParams struct layout in shared-structs.wgsl (40 × f32 = 160 bytes)
+    const buf = new ArrayBuffer(160);
     const f32 = new Float32Array(buf);
     const u32 = new Uint32Array(buf);
+
+    const h = v.sphRadius;
+    const h2 = h * h;
+    const h6 = h2 * h2 * h2;
+    const h9 = h6 * h2 * h;
+    const PI = Math.PI;
 
     f32[0]  = 1 / 60;            // dt (fixed timestep)
     u32[1]  = activeParticleCount || v.particleCount; // particle_count (adaptive override)
@@ -152,6 +158,12 @@ export class Config {
     f32[29] = v.brightnessFalloff; // brightness_falloff
     f32[30] = v.brightnessFloor;   // brightness_floor
     f32[31] = v.glowFalloff;      // glow_falloff
+    // Precomputed kernel coefficients (avoid per-interaction pow/division)
+    f32[32] = 315.0 / (64.0 * PI * h9);  // poly6_scale
+    f32[33] = -45.0 / (PI * h6);         // spiky_scale
+    f32[34] = 45.0 / (PI * h6);          // visc_scale
+    f32[35] = 1.0 / binSize;             // inv_bin_size
+    f32[36] = h2;                         // sph_radius_sq
 
     return buf;
   }
