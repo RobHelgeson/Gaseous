@@ -42,6 +42,15 @@ struct SimParams {
     brightness_falloff: f32,
     brightness_floor: f32,
     glow_falloff: f32,
+    // Precomputed kernel coefficients (avoid per-interaction pow/division)
+    poly6_scale: f32,       // 315 / (64 * PI * h^9)
+    spiky_scale: f32,       // -45 / (PI * h^6)
+    visc_scale: f32,        // 45 / (PI * h^6)
+    inv_bin_size: f32,      // 1.0 / bin_size
+    sph_radius_sq: f32,     // sph_radius * sph_radius
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 struct BallData {

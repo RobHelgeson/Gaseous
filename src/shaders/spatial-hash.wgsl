@@ -29,8 +29,9 @@ fn count_bins(@builtin(global_invocation_id) gid : vec3<u32>) {
     if ((p.flags & 1u) == 0u) { return; }
 
     let pos = p.pos_vel.xy;
-    let cx = clamp(u32(pos.x / params.bin_size), 0u, params.bins_x - 1u);
-    let cy = clamp(u32(pos.y / params.bin_size), 0u, params.bins_y - 1u);
+    let inv_bs = params.inv_bin_size;
+    let cx = clamp(u32(pos.x * inv_bs), 0u, params.bins_x - 1u);
+    let cy = clamp(u32(pos.y * inv_bs), 0u, params.bins_y - 1u);
     let cell = cy * params.bins_x + cx;
 
     atomicAdd(&bin_counts[cell], 1u);
@@ -57,8 +58,9 @@ fn sort_particles(@builtin(global_invocation_id) gid : vec3<u32>) {
     }
 
     let pos = p.pos_vel.xy;
-    let cx = clamp(u32(pos.x / params.bin_size), 0u, params.bins_x - 1u);
-    let cy = clamp(u32(pos.y / params.bin_size), 0u, params.bins_y - 1u);
+    let inv_bs = params.inv_bin_size;
+    let cx = clamp(u32(pos.x * inv_bs), 0u, params.bins_x - 1u);
+    let cy = clamp(u32(pos.y * inv_bs), 0u, params.bins_y - 1u);
     let cell = cy * params.bins_x + cx;
 
     // Claim a slot within this bin's range
