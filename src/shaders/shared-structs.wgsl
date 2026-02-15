@@ -37,6 +37,8 @@ struct SimParams {
     fog_intensity: f32,
     fog_falloff: f32,
     fog_size: f32,
+    intensity_falloff: f32,
+    intensity_floor: f32,
 };
 
 struct BallData {

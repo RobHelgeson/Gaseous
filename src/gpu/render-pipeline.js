@@ -107,6 +107,7 @@ export class RenderPipelines {
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
 
@@ -168,6 +169,7 @@ export class RenderPipelines {
       entries: [
         { binding: 0, resource: { buffer: buffers.particleBuffer } },
         { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+        { binding: 2, resource: { buffer: buffers.ballDataBuffer } },
       ],
     });
 
