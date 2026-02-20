@@ -1,0 +1,79 @@
+{
+  "id": "metaball",
+  "name": "Metaball",
+
+  "colors": {
+    "palette": [
+      [0.2, 0.6, 1.0],
+      [0.0, 0.9, 0.5],
+      [0.8, 0.2, 0.6],
+      [1.0, 0.5, 0.1],
+      [0.4, 0.2, 0.9],
+      [0.1, 0.8, 0.8]
+    ],
+    "mixMode": "additive"
+  },
+
+  "rendering": {
+    "mode": "metaball",
+    "fragmentShader": "src/shaders/metaball-energy.wgsl",
+    "resolveShader": "src/shaders/metaball-resolve.wgsl",
+    "backgroundShader": "src/shaders/nebula-background.wgsl",
+    "blendState": {
+      "particle": {
+        "color": { "srcFactor": "one", "dstFactor": "one", "operation": "add" },
+        "alpha": { "srcFactor": "one", "dstFactor": "one", "operation": "add" }
+      },
+      "fog": {
+        "color": { "srcFactor": "one", "dstFactor": "one", "operation": "add" },
+        "alpha": { "srcFactor": "one", "dstFactor": "one", "operation": "add" }
+      }
+    }
+  },
+
+  "metaball": {
+    "threshold": 0.3,
+    "edgeSoftness": 0.15,
+    "specularIntensity": 0.3,
+    "lightX": 0.3,
+    "lightY": -0.5
+  },
+
+  "background": {
+    "clearColor": [0.01, 0.005, 0.02, 1.0],
+    "shaderParams": [0.002, 0.6, 0.1, 0, 0]
+  },
+
+  "physics": {
+    "sphRadius": 30.0,
+    "restDensity": 1.5,
+    "gasConstant": 80.0,
+    "viscosity": 300.0,
+    "attractorBase": 700.0,
+    "attractorDecay": 0.004,
+    "tidalStripping": 0.001,
+    "gravityConstant": 80.0,
+    "ballGravity": 300.0,
+    "dragCoefficient": 0.03,
+    "bounceDamping": 0.5
+  },
+
+  "visual": {
+    "particleScale": 3.0,
+    "intensityFalloff": 0.3,
+    "intensityFloor": 0.15,
+    "brightnessFalloff": 0.2,
+    "brightnessFloor": 0.3,
+    "fogIntensity": 0.12,
+    "fogFalloff": 3.0,
+    "fogSize": 3.0,
+    "glowFalloff": 1.0
+  },
+
+  "cycle": {
+    "ballCount": 3,
+    "fadeInDuration": 2.5,
+    "fadeOutDuration": 4.0,
+    "transitionStyle": "sequential"
+  }
+}

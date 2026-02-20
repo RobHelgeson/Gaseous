@@ -33,6 +33,10 @@ export class Buffers {
   hdrView = null;
   /** @type {GPUSampler} */
   hdrSampler = null;
+  /** @type {GPUTexture} */
+  energyTexture = null;
+  /** @type {GPUTextureView} */
+  energyView = null;
   /** @type {GPUBuffer} */
   homogCellBuffer = null;
   /** @type {GPUBuffer} */
@@ -220,6 +224,7 @@ export class Buffers {
 
   #createHdrTexture(width, height) {
     if (this.hdrTexture) this.hdrTexture.destroy();
+    if (this.energyTexture) this.energyTexture.destroy();
     this.#width = width;
     this.#height = height;
 
@@ -230,6 +235,14 @@ export class Buffers {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.hdrView = this.hdrTexture.createView();
+
+    this.energyTexture = this.#device.createTexture({
+      label: 'energyTexture',
+      size: [width, height],
+      format: 'rgba16float',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.energyView = this.energyTexture.createView();
   }
 
   #createHomogeneityBuffers() {
@@ -369,5 +382,6 @@ export class Buffers {
     this.homogResultBuffer?.destroy();
     this.#homogReadbackBuffer?.destroy();
     this.hdrTexture?.destroy();
+    this.energyTexture?.destroy();
   }
 }

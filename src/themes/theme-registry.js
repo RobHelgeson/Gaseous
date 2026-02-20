@@ -1,6 +1,6 @@
 // theme-registry.js — Async JSON theme loading and switching
 
-const THEME_IDS = ['nebula', 'inky'];
+const THEME_IDS = ['nebula', 'inky', 'metaball'];
 
 const themes = new Map();
 let activeTheme = null;

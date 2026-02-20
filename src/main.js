@@ -119,6 +119,7 @@ async function main() {
     buffers.init(config.get('particleCount'), gpu.width, gpu.height, config.get('sphRadius'), ballManager);
     frameEncoder.rebuildBindGroups();
     frameEncoder.rebuildBgBindGroup();
+    frameEncoder.rebuildResolveBindGroup();
 
     // Restart the cycle
     cycleManager.restart();

@@ -86,8 +86,10 @@ export class GpuTiming {
   /** Update ceiling when user changes particleCount config */
   setCeiling(n) {
     this.#ceiling = n;
-    this.#targetCount = Math.min(this.#targetCount, n);
-    this.#displayCount = Math.min(this.#displayCount, n);
+    // When ceiling changes, reset target and display to the new ceiling
+    // so all particles are active (adaptive will scale down if needed)
+    this.#targetCount = n;
+    this.#displayCount = n;
   }
 
   /** Toggle adaptive mode */
@@ -165,7 +167,7 @@ export class GpuPassTimer {
 
   /** Resolve timestamps and copy to readback buffer after encoding all passes */
   resolve(encoder) {
-    if (!this.#enabled) return;
+    if (!this.#enabled || !this.#readbackAvailable) return;
     encoder.resolveQuerySet(this.#querySet, 0, TIMESTAMP_COUNT, this.#resolveBuffer, 0);
     encoder.copyBufferToBuffer(
       this.#resolveBuffer, 0,

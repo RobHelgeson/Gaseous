@@ -18,6 +18,9 @@ export class RenderPipelines {
   tonemapPipeline = null;
   tonemapBindGroupLayout = null;
 
+  resolvePipeline = null;
+  resolveBindGroupLayout = null;
+
   async init(device, canvasFormat, theme) {
     this.#device = device;
 
@@ -26,6 +29,7 @@ export class RenderPipelines {
       this.#createFogPipeline(theme),
       this.#createParticlePipeline(theme),
       this.#createTonemapPipeline(canvasFormat),
+      this.#createResolvePipeline(theme),
     ]);
   }
 
@@ -159,6 +163,47 @@ export class RenderPipelines {
     });
   }
 
+  async #createResolvePipeline(theme) {
+    const resolveShader = theme.rendering.resolveShader;
+    if (!resolveShader) {
+      this.resolvePipeline = null;
+      this.resolveBindGroupLayout = null;
+      return;
+    }
+
+    const code = await loadShader(resolveShader);
+    const module = this.#device.createShaderModule({ label: 'metaball-resolve', code });
+
+    this.resolveBindGroupLayout = this.#device.createBindGroupLayout({
+      label: 'resolve-bgl',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+
+    this.resolvePipeline = this.#device.createRenderPipeline({
+      label: 'resolvePipeline',
+      layout: this.#device.createPipelineLayout({
+        bindGroupLayouts: [this.resolveBindGroupLayout],
+      }),
+      vertex: { module, entryPoint: 'vs_main' },
+      fragment: {
+        module,
+        entryPoint: 'fs_main',
+        targets: [{
+          format: 'rgba16float',
+          blend: {
+            color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+            alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+          },
+        }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+  }
+
   /** Create bind groups that reference current buffers/textures.
    *  Particle rendering reads from the sort target buffer (has sorted + integrated data).
    *  Returns bind groups for both flip orientations. */
@@ -212,6 +257,20 @@ export class RenderPipelines {
       layout: this.backgroundBindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: bgParamsBuffer } },
+      ],
+    });
+  }
+
+  /** Create resolve bind group for metaball theme. Returns null if no resolve pipeline. */
+  createResolveBindGroup(buffers, resolveParamsBuffer) {
+    if (!this.resolveBindGroupLayout) return null;
+    return this.#device.createBindGroup({
+      label: 'resolve-bg',
+      layout: this.resolveBindGroupLayout,
+      entries: [
+        { binding: 0, resource: buffers.energyView },
+        { binding: 1, resource: buffers.hdrSampler },
+        { binding: 2, resource: { buffer: resolveParamsBuffer } },
       ],
     });
   }
