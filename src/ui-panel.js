@@ -16,6 +16,11 @@ export class UIPanel {
   #controllers = {};
   /** Live performance stats (updated externally each frame) */
   perf = { fps: 0, frameTime: 0, activeParticles: 0, cycleState: 'SPAWNING' };
+  /** Per-pass GPU timings (updated externally each frame) */
+  passTimes = {
+    clear_bins: 0, count_bins: 0, prefix_sum: 0, sort: 0,
+    density: 0, forces: 0, integrate: 0, render_total: 0,
+  };
 
   constructor(config) {
     this.#config = config;
@@ -75,6 +80,18 @@ export class UIPanel {
     perf.add(this.perf, 'frameTime', 0, 50, 0.1).name('Frame ms').listen().disable();
     perf.add(this.perf, 'activeParticles', 0, 200000, 1).name('Particles').listen().disable();
     perf.add(this.perf, 'cycleState').name('Cycle').listen().disable();
+
+    // GPU pass timings (only shown when timestamp-query is available)
+    const gpuFolder = this.#gui.addFolder('GPU Passes (ms)');
+    gpuFolder.add(this.passTimes, 'clear_bins', 0, 5, 0.001).name('Clear Bins').listen().disable();
+    gpuFolder.add(this.passTimes, 'count_bins', 0, 5, 0.001).name('Count Bins').listen().disable();
+    gpuFolder.add(this.passTimes, 'prefix_sum', 0, 5, 0.001).name('Prefix Sum').listen().disable();
+    gpuFolder.add(this.passTimes, 'sort', 0, 5, 0.001).name('Sort').listen().disable();
+    gpuFolder.add(this.passTimes, 'density', 0, 5, 0.001).name('Density').listen().disable();
+    gpuFolder.add(this.passTimes, 'forces', 0, 5, 0.001).name('Forces').listen().disable();
+    gpuFolder.add(this.passTimes, 'integrate', 0, 5, 0.001).name('Integrate').listen().disable();
+    gpuFolder.add(this.passTimes, 'render_total', 0, 5, 0.001).name('Render').listen().disable();
+    gpuFolder.close();
   }
 
   /** Refresh all proxy values from config (e.g. after theme switch) */

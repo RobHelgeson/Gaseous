@@ -225,6 +225,8 @@ export class ComputePipelines {
     });
   }
 
+  /** Create bind groups for both particle buffer orientations (ping-pong double buffering).
+   *  Returns an object with bind groups indexed by flip state (true=A current, false=B current). */
   createBindGroups(buffers) {
     const d = this.#device;
 
@@ -237,18 +239,7 @@ export class ComputePipelines {
       ],
     });
 
-    const countBinsBG = d.createBindGroup({
-      label: 'count-bins-bg',
-      layout: this.countBinsBGL,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.binCountBuffer } },
-        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
-        { binding: 2, resource: { buffer: buffers.particleBuffer } },
-      ],
-    });
-
-    // Prefix sum: per-iteration bind groups with dedicated uniform buffers
-    // Each iteration alternates A->B / B->A and uses its own prefixParamsBuffer
+    // Prefix sum: per-iteration bind groups (independent of particle buffers)
     const prefixSumBGs = [];
     const maxIter = buffers.prefixParamsBuffers.length;
     for (let i = 0; i < maxIter; i++) {
@@ -264,79 +255,7 @@ export class ComputePipelines {
       }));
     }
 
-    // Sort: reuses bin_counts as atomic counters (cleared to 0 before sort)
-    // bin_offsets comes from whichever buffer has the final prefix sum
-    // We'll pass both offset buffers; frame.js picks the right one
-    const makeSortBG = (offsetBuffer) => d.createBindGroup({
-      label: 'sort-bg',
-      layout: this.sortBGL,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.binCountBuffer } },
-        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
-        { binding: 2, resource: { buffer: buffers.particleBuffer } },
-        { binding: 3, resource: { buffer: offsetBuffer } },
-        { binding: 4, resource: { buffer: buffers.particleSortBuffer } },
-      ],
-    });
-    const sortBG_A = makeSortBG(buffers.binOffsetBufferA);
-    const sortBG_B = makeSortBG(buffers.binOffsetBufferB);
-
-    // Density: uses sorted particle buffer + bin offsets + bin counts
-    // After sort, bin_counts has been cleared and re-filled as atomic counters.
-    // We need the original counts — so we re-derive from offsets.
-    // Actually: after sort, frame.js copies sorted->main. Density reads main buffer.
-    // bin_offsets come from whichever prefix sum buffer was final.
-    // bin_counts: we need original counts. We'll re-count or store them.
-    // Simplification: density/forces use the exclusive prefix sum offsets.
-    // For count per bin: count[i] = offset[i+1] - offset[i].
-    // But that requires the inclusive sum. Let's just store counts separately.
-    // Actually the simplest: just use the same approach as sort — two variants.
-    const makeDensityBG = (offsetBuffer, countBuffer) => d.createBindGroup({
-      label: 'density-bg',
-      layout: this.densityBGL,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.particleBuffer } },
-        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
-        { binding: 2, resource: { buffer: offsetBuffer } },
-        { binding: 3, resource: { buffer: countBuffer } },
-      ],
-    });
-    const densityBG_A = makeDensityBG(buffers.binOffsetBufferA, buffers.binCountBuffer);
-    const densityBG_B = makeDensityBG(buffers.binOffsetBufferB, buffers.binCountBuffer);
-
-    const makeForcesBG = (offsetBuffer, countBuffer) => d.createBindGroup({
-      label: 'forces-bg',
-      layout: this.forcesBGL,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.particleBuffer } },
-        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
-        { binding: 2, resource: { buffer: offsetBuffer } },
-        { binding: 3, resource: { buffer: countBuffer } },
-        { binding: 4, resource: { buffer: buffers.ballDataBuffer } },
-      ],
-    });
-    const forcesBG_A = makeForcesBG(buffers.binOffsetBufferA, buffers.binCountBuffer);
-    const forcesBG_B = makeForcesBG(buffers.binOffsetBufferB, buffers.binCountBuffer);
-
-    const integrateBG = d.createBindGroup({
-      label: 'integrate-bg',
-      layout: this.integrateBGL,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.particleBuffer } },
-        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
-      ],
-    });
-
-    // Homogeneity bind groups
-    const homogAccumBG = d.createBindGroup({
-      label: 'homog-accum-bg',
-      layout: this.homogAccumBGL,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.homogCellBuffer } },
-        { binding: 1, resource: { buffer: buffers.particleBuffer } },
-        { binding: 2, resource: { buffer: buffers.simParamsBuffer } },
-      ],
-    });
+    // Homogeneity reduce (independent of particle buffers)
     const homogReduceBG = d.createBindGroup({
       label: 'homog-reduce-bg',
       layout: this.homogReduceBGL,
@@ -346,19 +265,100 @@ export class ComputePipelines {
       ],
     });
 
+    // Create particle-dependent bind groups for both orientations
+    // When flip=true: A is current (read source), B is sort target (write dest)
+    // When flip=false: B is current, A is sort target
+    const makeParticleBGs = (currentBuf, sortTargetBuf) => {
+      // count_bins reads from current buffer
+      const countBinsBG = d.createBindGroup({
+        label: 'count-bins-bg',
+        layout: this.countBinsBGL,
+        entries: [
+          { binding: 0, resource: { buffer: buffers.binCountBuffer } },
+          { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+          { binding: 2, resource: { buffer: currentBuf } },
+        ],
+      });
+
+      // Sort reads from current, writes to sort target
+      const makeSortBG = (offsetBuffer) => d.createBindGroup({
+        label: 'sort-bg',
+        layout: this.sortBGL,
+        entries: [
+          { binding: 0, resource: { buffer: buffers.binCountBuffer } },
+          { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+          { binding: 2, resource: { buffer: currentBuf } },
+          { binding: 3, resource: { buffer: offsetBuffer } },
+          { binding: 4, resource: { buffer: sortTargetBuf } },
+        ],
+      });
+      const sortBG_A = makeSortBG(buffers.binOffsetBufferA);
+      const sortBG_B = makeSortBG(buffers.binOffsetBufferB);
+
+      // Density/forces/integrate operate on sort target (has sorted data)
+      const makeDensityBG = (offsetBuffer) => d.createBindGroup({
+        label: 'density-bg',
+        layout: this.densityBGL,
+        entries: [
+          { binding: 0, resource: { buffer: sortTargetBuf } },
+          { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+          { binding: 2, resource: { buffer: offsetBuffer } },
+          { binding: 3, resource: { buffer: buffers.binCountSavedBuffer } },
+        ],
+      });
+      const densityBG_A = makeDensityBG(buffers.binOffsetBufferA);
+      const densityBG_B = makeDensityBG(buffers.binOffsetBufferB);
+
+      const makeForcesBG = (offsetBuffer) => d.createBindGroup({
+        label: 'forces-bg',
+        layout: this.forcesBGL,
+        entries: [
+          { binding: 0, resource: { buffer: sortTargetBuf } },
+          { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+          { binding: 2, resource: { buffer: offsetBuffer } },
+          { binding: 3, resource: { buffer: buffers.binCountSavedBuffer } },
+          { binding: 4, resource: { buffer: buffers.ballDataBuffer } },
+        ],
+      });
+      const forcesBG_A = makeForcesBG(buffers.binOffsetBufferA);
+      const forcesBG_B = makeForcesBG(buffers.binOffsetBufferB);
+
+      const integrateBG = d.createBindGroup({
+        label: 'integrate-bg',
+        layout: this.integrateBGL,
+        entries: [
+          { binding: 0, resource: { buffer: sortTargetBuf } },
+          { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+        ],
+      });
+
+      // Homogeneity reads from sort target (current frame's final particle state)
+      const homogAccumBG = d.createBindGroup({
+        label: 'homog-accum-bg',
+        layout: this.homogAccumBGL,
+        entries: [
+          { binding: 0, resource: { buffer: buffers.homogCellBuffer } },
+          { binding: 1, resource: { buffer: sortTargetBuf } },
+          { binding: 2, resource: { buffer: buffers.simParamsBuffer } },
+        ],
+      });
+
+      return {
+        countBinsBG, sortBG_A, sortBG_B,
+        densityBG_A, densityBG_B, forcesBG_A, forcesBG_B,
+        integrateBG, homogAccumBG,
+      };
+    };
+
+    const flipTrue = makeParticleBGs(buffers.particleBufferA, buffers.particleBufferB);
+    const flipFalse = makeParticleBGs(buffers.particleBufferB, buffers.particleBufferA);
+
     return {
       clearBinsBG,
-      countBinsBG,
       prefixSumBGs,
-      sortBG_A,
-      sortBG_B,
-      densityBG_A,
-      densityBG_B,
-      forcesBG_A,
-      forcesBG_B,
-      integrateBG,
-      homogAccumBG,
       homogReduceBG,
+      // Particle-dependent bind groups indexed by flip state
+      byFlip: { true: flipTrue, false: flipFalse },
     };
   }
 }

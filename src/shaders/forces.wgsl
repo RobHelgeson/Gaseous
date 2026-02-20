@@ -10,7 +10,7 @@
 const SHED_THRESHOLD : f32 = 0.1;
 const SOFTENING : f32 = 100.0;
 
-@compute @workgroup_size(64)
+@compute @workgroup_size(256)
 fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
     let idx = gid.x;
     if (idx >= params.particle_count) { return; }

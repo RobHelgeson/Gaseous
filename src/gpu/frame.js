@@ -9,6 +9,8 @@ export class FrameEncoder {
   #bgParamsBuffer;
   #bgBindGroup = null;
   #startTime = performance.now();
+  /** @type {import('./gpu-timing.js').GpuPassTimer|null} */
+  #passTimer = null;
 
   computePipelines = null;
   computeBindGroups = null;
@@ -46,77 +48,102 @@ export class FrameEncoder {
     this.#bgBindGroup = this.pipelines.createBackgroundBindGroup(this.#bgParamsBuffer);
   }
 
+  /** Set GPU pass timer for per-pass profiling */
+  setPassTimer(passTimer) {
+    this.#passTimer = passTimer;
+  }
+
   /** Encode and submit one frame */
   render(gpu, particleCount, binCount, runHomogeneity = false, ballCount = 0) {
     if (this.computePipelines && this.computeBindGroups) {
-      // Spatial hashing requires multiple submits for prefix sum uniform updates
-      // Returns true if exclusive prefix sum ended in buffer A
-      const offsetInA = this.#runSpatialHash(particleCount, binCount);
-
-      // Sort->main copy + density + forces + integrate + render
+      // Single command encoder for the entire frame
       const encoder = this.#device.createCommandEncoder({ label: 'frame' });
 
-      encoder.copyBufferToBuffer(
-        this.buffers.particleSortBuffer, 0,
-        this.buffers.particleBuffer, 0,
-        particleCount * 48,
-      );
+      // Prefix sum uniforms are pre-filled, so everything goes in one submission
+      this.buffers.preparePrefixParams(binCount);
 
-      this.#runDensity(encoder, particleCount, offsetInA);
-      this.#runForces(encoder, particleCount, offsetInA);
-      this.#runIntegrate(encoder, particleCount);
+      // Get flip-state bind groups for current particle buffer orientation
+      const flip = this.buffers.currentParticleBuffer === this.buffers.particleBufferA;
+      const fbg = this.computeBindGroups.byFlip[flip];
+
+      const offsetInA = this.#runSpatialHash(encoder, particleCount, binCount, fbg);
+
+      // No copy needed — sort wrote directly to sortTargetBuffer
+      // density/forces/integrate operate on sortTargetBuffer via flip-aware bind groups
+
+      this.#runDensity(encoder, particleCount, offsetInA, fbg);
+      this.#runForces(encoder, particleCount, offsetInA, fbg);
+      this.#runIntegrate(encoder, particleCount, fbg);
 
       this.#uploadBgParams(gpu.width, gpu.height);
       this.#renderBackground(encoder);
       this.#renderFog(encoder, ballCount);
-      this.#renderParticles(encoder, particleCount);
+      this.#renderParticles(encoder, particleCount, flip);
       this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
+
+      // Resolve GPU timestamps before finishing the encoder
+      if (this.#passTimer) {
+        this.#passTimer.resolve(encoder);
+      }
 
       this.#device.queue.submit([encoder.finish()]);
 
+      // Flip particle buffers — sort target becomes current for next frame
+      this.buffers.flipParticleBuffers();
+
+      // Non-blocking readback of GPU pass timings
+      if (this.#passTimer) {
+        this.#passTimer.readback();
+      }
+
       // Homogeneity check (separate submit, reads current particle state)
+      // fbg was computed pre-flip, its homogAccumBG reads sortTargetBuf which has the integrated data
       if (runHomogeneity) {
-        this.#runHomogeneity(particleCount);
+        this.#runHomogeneity(particleCount, fbg);
       }
     } else {
       const encoder = this.#device.createCommandEncoder({ label: 'frame' });
       this.#uploadBgParams(gpu.width, gpu.height);
       this.#renderBackground(encoder);
       this.#renderFog(encoder, ballCount);
-      this.#renderParticles(encoder, particleCount);
+      // In non-compute mode, render from buffer A (initial data, no ping-pong)
+      this.#renderParticles(encoder, particleCount, false);
       this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
       this.#device.queue.submit([encoder.finish()]);
     }
   }
 
   /** @returns {boolean} true if exclusive prefix sum result is in buffer A */
-  #runSpatialHash(particleCount, binCount) {
-    const bg = this.computeBindGroups;
+  #runSpatialHash(enc, particleCount, binCount, fbg) {
     const cp = this.computePipelines;
+    const bg = this.computeBindGroups;
     const wgParticles = Math.ceil(particleCount / 64);
     const wgBins = Math.ceil(binCount / 64);
 
-    // Pre-fill all prefix sum uniform buffers in one batch
-    this.buffers.preparePrefixParams(binCount);
-
-    // Single command encoder for the entire spatial hash pipeline
-    const enc = this.#device.createCommandEncoder({ label: 'spatial-hash' });
-
     // 1. Clear bins
-    const clear = enc.beginComputePass({ label: 'clear-bins' });
+    const tw0 = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('clear_bins'));
+    const clear = enc.beginComputePass({ label: 'clear-bins', ...(tw0 && { timestampWrites: tw0 }) });
     clear.setPipeline(cp.clearBinsPipeline);
     clear.setBindGroup(0, bg.clearBinsBG);
     clear.dispatchWorkgroups(wgBins);
     clear.end();
 
-    // 2. Count particles per bin
-    const count = enc.beginComputePass({ label: 'count-bins' });
+    // 2. Count particles per bin (reads from current particle buffer)
+    const tw1 = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('count_bins'));
+    const count = enc.beginComputePass({ label: 'count-bins', ...(tw1 && { timestampWrites: tw1 }) });
     count.setPipeline(cp.countBinsPipeline);
-    count.setBindGroup(0, bg.countBinsBG);
+    count.setBindGroup(0, fbg.countBinsBG);
     count.dispatchWorkgroups(wgParticles);
     count.end();
 
-    // 3. Copy bin counts to offset buffer A as prefix sum input
+    // 3a. Save bin counts before sort clears them (density/forces need original counts)
+    enc.copyBufferToBuffer(
+      this.buffers.binCountBuffer, 0,
+      this.buffers.binCountSavedBuffer, 0,
+      binCount * 4,
+    );
+
+    // 3b. Copy bin counts to offset buffer A as prefix sum input
     enc.copyBufferToBuffer(
       this.buffers.binCountBuffer, 0,
       this.buffers.binOffsetBufferA, 0,
@@ -124,9 +151,12 @@ export class FrameEncoder {
     );
 
     // 4. Prefix sum iterations — each uses its own bind group with pre-filled uniform
+    // Timestamp the first pass and last (make_exclusive) to measure total prefix sum time
     const iterations = Math.ceil(Math.log2(binCount));
+    const twPS = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('prefix_sum'));
     for (let i = 0; i < iterations; i++) {
-      const pass = enc.beginComputePass({ label: `prefix-sum-${i}` });
+      const tw = (i === 0 && twPS) ? { timestampWrites: { querySet: twPS.querySet, beginningOfPassWriteIndex: twPS.beginningOfPassWriteIndex } } : {};
+      const pass = enc.beginComputePass({ label: `prefix-sum-${i}`, ...tw });
       pass.setPipeline(cp.prefixSumPipeline);
       pass.setBindGroup(0, bg.prefixSumBGs[i]);
       pass.dispatchWorkgroups(wgBins);
@@ -134,16 +164,14 @@ export class FrameEncoder {
     }
 
     // 5. Convert inclusive to exclusive prefix sum
-    const excPass = enc.beginComputePass({ label: 'make-exclusive' });
+    const twExc = twPS ? { timestampWrites: { querySet: twPS.querySet, endOfPassWriteIndex: twPS.endOfPassWriteIndex } } : {};
+    const excPass = enc.beginComputePass({ label: 'make-exclusive', ...twExc });
     excPass.setPipeline(cp.makeExclusivePipeline);
     excPass.setBindGroup(0, bg.prefixSumBGs[iterations]);
     excPass.dispatchWorkgroups(wgBins);
     excPass.end();
 
     // Determine which buffer has the exclusive prefix sum result
-    // Iterations alternate A->B (even i) and B->A (odd i)
-    // make_exclusive is one more pass, so total passes = iterations + 1
-    // Even total -> result in A, odd total -> result in B
     const readFromA = ((iterations + 1) % 2 === 0);
 
     // 6. Clear bin counts (for sort atomics)
@@ -153,35 +181,34 @@ export class FrameEncoder {
     clearSort.dispatchWorkgroups(wgBins);
     clearSort.end();
 
-    // 7. Sort particles into bins
-    const sort = enc.beginComputePass({ label: 'sort-particles' });
+    // 7. Sort particles into bins (reads current, writes to sort target)
+    const tw3 = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('sort'));
+    const sort = enc.beginComputePass({ label: 'sort-particles', ...(tw3 && { timestampWrites: tw3 }) });
     sort.setPipeline(cp.sortPipeline);
-    sort.setBindGroup(0, readFromA ? bg.sortBG_A : bg.sortBG_B);
+    sort.setBindGroup(0, readFromA ? fbg.sortBG_A : fbg.sortBG_B);
     sort.dispatchWorkgroups(wgParticles);
     sort.end();
-
-    this.#device.queue.submit([enc.finish()]);
 
     return readFromA;
   }
 
-  #runHomogeneity(particleCount) {
-    const bg = this.computeBindGroups;
+  #runHomogeneity(particleCount, fbg) {
     const cp = this.computePipelines;
+    const bg = this.computeBindGroups;
 
     const encoder = this.#device.createCommandEncoder({ label: 'homogeneity' });
 
     // Clear cell accumulators (256 cells × 4 u32s = 1024 values)
     const clear = encoder.beginComputePass({ label: 'homog-clear' });
     clear.setPipeline(cp.homogClearPipeline);
-    clear.setBindGroup(0, bg.homogAccumBG);
+    clear.setBindGroup(0, fbg.homogAccumBG);
     clear.dispatchWorkgroups(Math.ceil(1024 / 64));
     clear.end();
 
     // Accumulate particle colors per cell
     const accum = encoder.beginComputePass({ label: 'homog-accumulate' });
     accum.setPipeline(cp.homogAccumPipeline);
-    accum.setBindGroup(0, bg.homogAccumBG);
+    accum.setBindGroup(0, fbg.homogAccumBG);
     accum.dispatchWorkgroups(Math.ceil(particleCount / 64));
     accum.end();
 
@@ -202,28 +229,29 @@ export class FrameEncoder {
     this.#device.queue.submit([encoder.finish()]);
   }
 
-  #runDensity(encoder, particleCount, offsetInA) {
-    const bg = this.computeBindGroups;
-    const pass = encoder.beginComputePass({ label: 'density' });
+  #runDensity(encoder, particleCount, offsetInA, fbg) {
+    const tw = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('density'));
+    const pass = encoder.beginComputePass({ label: 'density', ...(tw && { timestampWrites: tw }) });
     pass.setPipeline(this.computePipelines.densityPipeline);
-    pass.setBindGroup(0, offsetInA ? bg.densityBG_A : bg.densityBG_B);
-    pass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+    pass.setBindGroup(0, offsetInA ? fbg.densityBG_A : fbg.densityBG_B);
+    pass.dispatchWorkgroups(Math.ceil(particleCount / 256));
     pass.end();
   }
 
-  #runForces(encoder, particleCount, offsetInA) {
-    const bg = this.computeBindGroups;
-    const pass = encoder.beginComputePass({ label: 'forces' });
+  #runForces(encoder, particleCount, offsetInA, fbg) {
+    const tw = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('forces'));
+    const pass = encoder.beginComputePass({ label: 'forces', ...(tw && { timestampWrites: tw }) });
     pass.setPipeline(this.computePipelines.forcesPipeline);
-    pass.setBindGroup(0, offsetInA ? bg.forcesBG_A : bg.forcesBG_B);
-    pass.dispatchWorkgroups(Math.ceil(particleCount / 64));
+    pass.setBindGroup(0, offsetInA ? fbg.forcesBG_A : fbg.forcesBG_B);
+    pass.dispatchWorkgroups(Math.ceil(particleCount / 256));
     pass.end();
   }
 
-  #runIntegrate(encoder, particleCount) {
-    const pass = encoder.beginComputePass({ label: 'integrate' });
+  #runIntegrate(encoder, particleCount, fbg) {
+    const tw = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('integrate'));
+    const pass = encoder.beginComputePass({ label: 'integrate', ...(tw && { timestampWrites: tw }) });
     pass.setPipeline(this.computePipelines.integratePipeline);
-    pass.setBindGroup(0, this.computeBindGroups.integrateBG);
+    pass.setBindGroup(0, fbg.integrateBG);
     pass.dispatchWorkgroups(Math.ceil(particleCount / 64));
     pass.end();
   }
@@ -244,6 +272,9 @@ export class FrameEncoder {
   }
 
   #renderBackground(encoder) {
+    const tw = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('render_total'));
+    // Attach begin timestamp to first render pass
+    const twBegin = tw ? { timestampWrites: { querySet: tw.querySet, beginningOfPassWriteIndex: tw.beginningOfPassWriteIndex } } : {};
     const pass = encoder.beginRenderPass({
       label: 'background',
       colorAttachments: [{
@@ -252,6 +283,7 @@ export class FrameEncoder {
         loadOp: 'clear',
         storeOp: 'store',
       }],
+      ...twBegin,
     });
     pass.setPipeline(this.pipelines.backgroundPipeline);
     pass.setBindGroup(0, this.#bgBindGroup);
@@ -275,7 +307,8 @@ export class FrameEncoder {
     pass.end();
   }
 
-  #renderParticles(encoder, particleCount) {
+  #renderParticles(encoder, particleCount, flip) {
+    const particleBG = this.bindGroups.particleBGByFlip[flip];
     const pass = encoder.beginRenderPass({
       label: 'particles',
       colorAttachments: [{
@@ -285,12 +318,15 @@ export class FrameEncoder {
       }],
     });
     pass.setPipeline(this.pipelines.particlePipeline);
-    pass.setBindGroup(0, this.bindGroups.particleBG);
+    pass.setBindGroup(0, particleBG);
     pass.draw(6, particleCount);
     pass.end();
   }
 
   #renderTonemap(encoder, swapView) {
+    const tw = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('render_total'));
+    // Attach end timestamp to last render pass
+    const twEnd = tw ? { timestampWrites: { querySet: tw.querySet, endOfPassWriteIndex: tw.endOfPassWriteIndex } } : {};
     const pass = encoder.beginRenderPass({
       label: 'tonemap',
       colorAttachments: [{
@@ -299,6 +335,7 @@ export class FrameEncoder {
         loadOp: 'clear',
         storeOp: 'store',
       }],
+      ...twEnd,
     });
     pass.setPipeline(this.pipelines.tonemapPipeline);
     pass.setBindGroup(0, this.bindGroups.tonemapBG);
