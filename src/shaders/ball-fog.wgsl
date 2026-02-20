@@ -30,8 +30,8 @@ fn vs_main(
     let center = ball.pos;
     let color = ball.color;
 
-    // Quad extends 5× ball radius for soft falloff
-    let size = ball.radius * 5.0;
+    // Quad extends fog_size × ball radius for soft falloff
+    let size = ball.radius * params.fog_size;
 
     let corner = QUAD_POS[vid];
     let world_pos = center + corner * size;
@@ -48,9 +48,6 @@ fn vs_main(
     return out;
 }
 
-const FOG_FALLOFF : f32 = 3.0;
-const FOG_INTENSITY : f32 = 0.15;
-
 @fragment
 fn fs_main(in : VertexOut) -> @location(0) vec4<f32> {
     // Distance from center of quad (0,0 = center, 1 = edge)
@@ -58,9 +55,7 @@ fn fs_main(in : VertexOut) -> @location(0) vec4<f32> {
     let dist2 = dot(centered, centered);
 
     // Gaussian falloff — no hard cutoff, tapers smoothly to zero
-    // At quad edge (dist2=1): exp(-3) ≈ 0.05 → faint
-    // At quad corner (dist2=2): exp(-6) ≈ 0.002 → invisible
-    let intensity = exp(-dist2 * FOG_FALLOFF) * FOG_INTENSITY;
+    let intensity = exp(-dist2 * params.fog_falloff) * params.fog_intensity;
 
     let hdr_color = in.color * intensity * in.alpha;
 

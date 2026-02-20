@@ -12,6 +12,7 @@ import { loadSharedStructs } from './gpu/shader-loader.js';
 import { BallManager } from './ball-manager.js';
 import { CycleManager } from './cycle-manager.js';
 import { GpuTiming } from './gpu/gpu-timing.js';
+import { loadThemes, getActiveTheme, setActiveTheme, getTheme, nextThemeId } from './themes/theme-registry.js';
 
 async function main() {
   const canvas = document.getElementById('canvas');
@@ -25,8 +26,12 @@ async function main() {
     `${gpu.width}x${gpu.height}`,
     gpu.hasTimestampQuery ? '(timestamp-query available)' : '(no timestamp-query)');
 
-  // Preload shared structs, then create pipelines
-  await loadSharedStructs();
+  // Preload shared structs and themes, then create pipelines
+  await Promise.all([loadSharedStructs(), loadThemes()]);
+
+  // Apply initial theme defaults to config
+  const initialTheme = getActiveTheme();
+  config.applyTheme(initialTheme);
 
   const ballManager = new BallManager(
     config.get('ballCount'),
@@ -40,7 +45,7 @@ async function main() {
   const renderPipelines = new RenderPipelines();
   const computePipelines = new ComputePipelines();
   await Promise.all([
-    renderPipelines.init(gpu.device, gpu.format),
+    renderPipelines.init(gpu.device, gpu.format, initialTheme),
     computePipelines.init(gpu.device),
   ]);
 
@@ -71,6 +76,10 @@ async function main() {
     ui.toggle();
     input.setKeepCursorVisible(ui.visible);
   });
+  input.onCycleTheme(() => {
+    const next = nextThemeId(config.get('theme'));
+    config.set('theme', next);
+  });
 
   // Handle config changes
   config.onChange((key, value, old) => {
@@ -86,13 +95,46 @@ async function main() {
     }
   });
 
+  // Theme switching — recreates render pipelines with new blend states and shaders
+  let themeSwitching = false;
+  config.onChange(async (key, value) => {
+    if (key !== 'theme' || themeSwitching) return;
+    const newTheme = getTheme(value);
+    if (!newTheme || newTheme.id === getActiveTheme().id) return;
+
+    themeSwitching = true;
+    console.log(`Theme: switching to ${newTheme.name}`);
+    setActiveTheme(newTheme.id);
+
+    // Apply theme param defaults to config (fires onChange for each param)
+    config.applyTheme(newTheme);
+
+    // Recreate render pipelines with new blend states and shaders
+    await renderPipelines.init(gpu.device, gpu.format, newTheme);
+
+    // Reinit ball manager + buffers with new theme colors and params
+    ballManager.respawn(config.get('ballCount'), config.get('particleCount'));
+    buffers.init(config.get('particleCount'), gpu.width, gpu.height, config.get('sphRadius'), ballManager);
+    frameEncoder.rebuildBindGroups();
+    frameEncoder.rebuildBgBindGroup();
+
+    // Restart the cycle
+    cycleManager.restart();
+
+    // Refresh UI sliders to show new param values
+    ui.refreshFromConfig();
+
+    themeSwitching = false;
+    console.log(`Theme: ${newTheme.name} active`);
+  });
+
   // Frame loop
   let frameNumber = 0;
 
   function frame() {
     requestAnimationFrame(frame);
 
-    if (input.paused) return;
+    if (input.paused || themeSwitching) return;
 
     gpuTiming.beginFrame();
 

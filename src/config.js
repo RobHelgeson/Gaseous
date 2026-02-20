@@ -28,8 +28,29 @@ const PARAM_DEFS = {
 
   // Visual
   particleScale:       { value: 1.0,   min: 0.1,   max: 5.0,    step: 0.1,   category: 'visual', label: 'Particle Scale' },
+  intensityFalloff:    { value: 1.5,   min: 0.0,   max: 5.0,    step: 0.1,   category: 'visual', label: 'Intensity Falloff' },
+  intensityFloor:      { value: 0.03,  min: 0.01,  max: 0.5,    step: 0.01,  category: 'visual', label: 'Intensity Floor' },
+  brightnessFalloff:   { value: 1.5,   min: 0.0,   max: 5.0,    step: 0.1,   category: 'visual', label: 'Brightness Falloff' },
+  brightnessFloor:     { value: 0.05,  min: 0.01,  max: 0.5,    step: 0.01,  category: 'visual', label: 'Brightness Floor' },
+  fogIntensity:        { value: 0.15,  min: 0.0,   max: 1.0,    step: 0.01,  category: 'visual', label: 'Fog Intensity' },
+  fogFalloff:          { value: 4.0,   min: 0.5,   max: 10.0,   step: 0.5,   category: 'visual', label: 'Fog Falloff' },
+  fogSize:             { value: 2.5,   min: 1.0,   max: 8.0,    step: 0.5,   category: 'visual', label: 'Fog Size' },
+  glowFalloff:         { value: 2.5,   min: 0.5,   max: 8.0,    step: 0.1,   category: 'visual', label: 'Glow Falloff' },
   theme:               { value: 'nebula',                                      category: 'visual', label: 'Theme' },
 };
+
+// Parameters that are theme-owned (reset when theme changes)
+const THEME_PARAMS = new Set([
+  // physics
+  'sphRadius', 'restDensity', 'gasConstant', 'viscosity', 'attractorBase',
+  'attractorDecay', 'tidalStripping', 'gravityConstant', 'ballGravity',
+  'dragCoefficient', 'bounceDamping',
+  // visual
+  'particleScale', 'intensityFalloff', 'intensityFloor', 'brightnessFalloff',
+  'brightnessFloor', 'fogIntensity', 'fogFalloff', 'fogSize', 'glowFalloff',
+  // cycle
+  'ballCount',
+]);
 
 export class Config {
   #values = {};
@@ -67,6 +88,21 @@ export class Config {
     };
   }
 
+  /** Apply theme defaults to all theme-owned parameters */
+  applyTheme(theme) {
+    const map = {
+      ...theme.physics,
+      ...theme.visual,
+      ballCount: theme.cycle.ballCount,
+    };
+    for (const [key, val] of Object.entries(map)) {
+      if (THEME_PARAMS.has(key)) {
+        this.set(key, val);
+      }
+    }
+    this.set('theme', theme.id);
+  }
+
   /** Returns all current values as a plain object */
   snapshot() {
     return { ...this.#values };
@@ -79,10 +115,16 @@ export class Config {
     const binsX = Math.ceil(canvasWidth / binSize);
     const binsY = Math.ceil(canvasHeight / binSize);
 
-    // Must match SimParams struct layout in shared-structs.wgsl
-    const buf = new ArrayBuffer(128);
+    // Must match SimParams struct layout in shared-structs.wgsl (40 × f32 = 160 bytes)
+    const buf = new ArrayBuffer(160);
     const f32 = new Float32Array(buf);
     const u32 = new Uint32Array(buf);
+
+    const h = v.sphRadius;
+    const h2 = h * h;
+    const h6 = h2 * h2 * h2;
+    const h9 = h6 * h2 * h;
+    const PI = Math.PI;
 
     f32[0]  = 1 / 60;            // dt (fixed timestep)
     u32[1]  = activeParticleCount || v.particleCount; // particle_count (adaptive override)
@@ -108,11 +150,29 @@ export class Config {
     f32[21] = v.attractorDecay;   // attractor_decay
     f32[22] = v.bounceDamping;   // bounce_damping
     f32[23] = v.tidalStripping;  // tidal_stripping
+    f32[24] = v.fogIntensity;   // fog_intensity
+    f32[25] = v.fogFalloff;     // fog_falloff
+    f32[26] = v.fogSize;        // fog_size
+    f32[27] = v.intensityFalloff; // intensity_falloff
+    f32[28] = v.intensityFloor;   // intensity_floor
+    f32[29] = v.brightnessFalloff; // brightness_falloff
+    f32[30] = v.brightnessFloor;   // brightness_floor
+    f32[31] = v.glowFalloff;      // glow_falloff
+    // Precomputed kernel coefficients (avoid per-interaction pow/division)
+    f32[32] = 315.0 / (64.0 * PI * h9);  // poly6_scale
+    f32[33] = -45.0 / (PI * h6);         // spiky_scale
+    f32[34] = 45.0 / (PI * h6);          // visc_scale
+    f32[35] = 1.0 / binSize;             // inv_bin_size
+    f32[36] = h2;                         // sph_radius_sq
 
     return buf;
   }
 
   static get PARAMS() {
     return PARAM_DEFS;
+  }
+
+  static get THEME_PARAMS() {
+    return THEME_PARAMS;
   }
 }

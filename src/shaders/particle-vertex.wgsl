@@ -3,12 +3,15 @@
 
 @group(0) @binding(0) var<storage, read> particles : array<Particle>;
 @group(0) @binding(1) var<uniform> params : SimParams;
+@group(0) @binding(2) var<storage, read> balls : array<BallData>;
 
 struct VertexOut {
     @builtin(position) pos : vec4<f32>,
     @location(0) uv : vec2<f32>,
-    @location(1) color : vec3<f32>,
-    @location(2) alpha : f32,
+    @location(1) @interpolate(flat) color : vec3<f32>,
+    @location(2) @interpolate(flat) alpha : f32,
+    @location(3) @interpolate(flat) brightness : f32,
+    @location(4) @interpolate(flat) glow_falloff : f32,
 };
 
 // 6 vertices for a quad (two triangles)
@@ -28,21 +31,33 @@ fn vs_main(
 ) -> VertexOut {
     let p = particles[iid];
     let pos2d = p.pos_vel.xy;
-    let color = p.color_density.xyz;
 
-    let alive = (p.flags & 1u) != 0u;
-    let fading = (p.flags & 2u) != 0u;
-    var alpha = select(0.0, 1.0, alive);
-    // fading particles use attractor_str as fade alpha
-    if (fading) {
-        alpha = p.attractor_str;
-    }
-    // Global cycle fade (spawning fade-in / fading fade-out)
+    let flags = p.flags;
+    let alive = (flags & 1u) != 0u;
+    let fading = (flags & 2u) != 0u;
+    var alpha = select(0.0, select(1.0, p.attractor_str, fading), alive);
     alpha *= params.fade_alpha;
 
-    // Quad size in pixels, scaled by particle_scale
-    let size = 4.0 * params.particle_scale;
+    // Distance-based falloff: min normalized distance-squared to nearest ball
+    var brightness = 1.0;
+    if (params.intensity_falloff > 0.0 || params.brightness_falloff > 0.0) {
+        var min_nd2 = 1e12;
+        for (var b = 0u; b < params.ball_count; b++) {
+            let d = pos2d - balls[b].pos;
+            let inv_r = 1.0 / max(balls[b].radius, 1.0);
+            min_nd2 = min(min_nd2, dot(d, d) * inv_r * inv_r);
+        }
+        if (params.intensity_falloff > 0.0) {
+            alpha *= max(params.intensity_floor,
+                         exp(-min_nd2 * params.intensity_falloff * 0.1));
+        }
+        if (params.brightness_falloff > 0.0) {
+            brightness = max(params.brightness_floor,
+                             exp(-min_nd2 * params.brightness_falloff * 0.1));
+        }
+    }
 
+    let size = 4.0 * params.particle_scale;
     let corner = QUAD_POS[vid];
     let world_pos = pos2d + corner * size;
 
@@ -53,7 +68,9 @@ fn vs_main(
     var out : VertexOut;
     out.pos = vec4(clip_x, clip_y, 0.0, 1.0);
     out.uv = corner * 0.5 + 0.5;
-    out.color = color;
+    out.color = p.color_density.xyz;
     out.alpha = alpha;
+    out.brightness = brightness;
+    out.glow_falloff = params.glow_falloff;
     return out;
 }

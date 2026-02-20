@@ -13,6 +13,8 @@ export class Input {
   #onRestart = null;
   /** @type {Function|null} */
   #onToggleUI = null;
+  /** @type {Function|null} */
+  #onCycleTheme = null;
 
   mouseX = 0;
   mouseY = 0;
@@ -32,6 +34,7 @@ export class Input {
   onPause(fn) { this.#onPause = fn; }
   onRestart(fn) { this.#onRestart = fn; }
   onToggleUI(fn) { this.#onToggleUI = fn; }
+  onCycleTheme(fn) { this.#onCycleTheme = fn; }
 
   #bindKeyboard() {
     document.addEventListener('keydown', (e) => {
@@ -52,6 +55,10 @@ export class Input {
 
         case 'KeyR':
           if (this.#onRestart) this.#onRestart();
+          break;
+
+        case 'KeyT':
+          if (this.#onCycleTheme) this.#onCycleTheme();
           break;
 
         case 'Escape':
@@ -78,6 +85,14 @@ export class Input {
         this.mouseY = t.clientY * dpr;
       }
     }, { passive: true });
+
+    // Three-finger tap toggles UI (no keyboard on mobile)
+    this.#canvas.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 3 && this.#onToggleUI) {
+        e.preventDefault();
+        this.#onToggleUI();
+      }
+    });
   }
 
   #toggleFullscreen() {

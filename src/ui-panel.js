@@ -2,6 +2,7 @@
 
 import GUI from '../lib/lil-gui.esm.min.js';
 import { Config } from './config.js';
+import { listThemes, getThemeNames } from './themes/theme-registry.js';
 
 export class UIPanel {
   /** @type {GUI} */
@@ -11,6 +12,8 @@ export class UIPanel {
   #visible = false;
   /** Proxy object that lil-gui reads/writes */
   #proxy = {};
+  /** Controllers keyed by param name, for updating on theme switch */
+  #controllers = {};
   /** Live performance stats (updated externally each frame) */
   perf = { fps: 0, frameTime: 0, activeParticles: 0, cycleState: 'SPAWNING' };
 
@@ -32,7 +35,16 @@ export class UIPanel {
     const params = Config.PARAMS;
     const folders = {};
 
+    // Theme selector at the top level for easy access
+    this.#proxy.theme = this.#config.get('theme');
+    this.#controllers.theme = this.#gui.add(this.#proxy, 'theme', getThemeNames())
+      .name('Theme').onChange((v) => {
+        this.#config.set('theme', v);
+      });
+
     for (const [key, def] of Object.entries(params)) {
+      if (key === 'theme') continue; // already added at top level
+
       const cat = def.category;
       if (!folders[cat]) {
         folders[cat] = this.#gui.addFolder(cat.charAt(0).toUpperCase() + cat.slice(1));
@@ -43,16 +55,11 @@ export class UIPanel {
       this.#proxy[key] = this.#config.get(key);
 
       if (typeof def.value === 'boolean') {
-        folder.add(this.#proxy, key).name(def.label).onChange((v) => {
-          this.#config.set(key, v);
-        });
-      } else if (typeof def.value === 'string') {
-        // Theme dropdown — only nebula for now
-        folder.add(this.#proxy, key, ['nebula']).name(def.label).onChange((v) => {
+        this.#controllers[key] = folder.add(this.#proxy, key).name(def.label).onChange((v) => {
           this.#config.set(key, v);
         });
       } else if (def.min !== undefined) {
-        folder.add(this.#proxy, key, def.min, def.max, def.step).name(def.label).onChange((v) => {
+        this.#controllers[key] = folder.add(this.#proxy, key, def.min, def.max, def.step).name(def.label).onChange((v) => {
           this.#config.set(key, v);
         });
       }
@@ -68,6 +75,20 @@ export class UIPanel {
     perf.add(this.perf, 'frameTime', 0, 50, 0.1).name('Frame ms').listen().disable();
     perf.add(this.perf, 'activeParticles', 0, 200000, 1).name('Particles').listen().disable();
     perf.add(this.perf, 'cycleState').name('Cycle').listen().disable();
+  }
+
+  /** Refresh all proxy values from config (e.g. after theme switch) */
+  refreshFromConfig() {
+    const params = Config.PARAMS;
+    for (const key of Object.keys(params)) {
+      const val = this.#config.get(key);
+      if (this.#proxy[key] !== val) {
+        this.#proxy[key] = val;
+        if (this.#controllers[key]) {
+          this.#controllers[key].updateDisplay();
+        }
+      }
+    }
   }
 
   toggle() {

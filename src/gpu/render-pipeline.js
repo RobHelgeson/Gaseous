@@ -1,4 +1,4 @@
-// render-pipeline.js — Render pipeline creation for background, particles, and tonemap
+// render-pipeline.js — Render pipeline creation for background, particles, fog, and tonemap
 
 import { loadShader, loadParticleShader } from './shader-loader.js';
 
@@ -18,21 +18,22 @@ export class RenderPipelines {
   tonemapPipeline = null;
   tonemapBindGroupLayout = null;
 
-  async init(device, canvasFormat) {
+  async init(device, canvasFormat, theme) {
     this.#device = device;
 
     await Promise.all([
-      this.#createBackgroundPipeline(canvasFormat),
-      this.#createFogPipeline(),
-      this.#createParticlePipeline(canvasFormat),
+      this.#createBackgroundPipeline(theme),
+      this.#createFogPipeline(theme),
+      this.#createParticlePipeline(theme),
       this.#createTonemapPipeline(canvasFormat),
     ]);
   }
 
-  async #createBackgroundPipeline() {
+  async #createBackgroundPipeline(theme) {
+    const bgShader = theme.rendering.backgroundShader;
     const [vertCode, fragCode] = await Promise.all([
       loadShader('src/shaders/background-vertex.wgsl'),
-      loadShader('src/shaders/nebula-background.wgsl'),
+      loadShader(bgShader),
     ]);
 
     const vertModule = this.#device.createShaderModule({ label: 'bg-vert', code: vertCode });
@@ -60,9 +61,11 @@ export class RenderPipelines {
     });
   }
 
-  async #createFogPipeline() {
+  async #createFogPipeline(theme) {
     const code = await loadParticleShader('src/shaders/ball-fog.wgsl');
     const module = this.#device.createShaderModule({ label: 'ball-fog', code });
+
+    const fogBlend = theme.rendering.blendState.fog;
 
     this.fogBindGroupLayout = this.#device.createBindGroupLayout({
       label: 'fog-bgl',
@@ -83,30 +86,31 @@ export class RenderPipelines {
         entryPoint: 'fs_main',
         targets: [{
           format: 'rgba16float',
-          blend: {
-            color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
-            alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
-          },
+          blend: fogBlend,
         }],
       },
       primitive: { topology: 'triangle-list' },
     });
   }
 
-  async #createParticlePipeline() {
+  async #createParticlePipeline(theme) {
+    const fragShader = theme.rendering.fragmentShader;
     const [vertCode, fragCode] = await Promise.all([
       loadParticleShader('src/shaders/particle-vertex.wgsl'),
-      loadShader('src/shaders/nebula-fragment.wgsl'),
+      loadShader(fragShader),
     ]);
 
     const vertModule = this.#device.createShaderModule({ label: 'particle-vert', code: vertCode });
     const fragModule = this.#device.createShaderModule({ label: 'particle-frag', code: fragCode });
+
+    const particleBlend = theme.rendering.blendState.particle;
 
     this.particleBindGroupLayout = this.#device.createBindGroupLayout({
       label: 'particle-bgl',
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
 
@@ -121,10 +125,7 @@ export class RenderPipelines {
         entryPoint: 'fs_main',
         targets: [{
           format: 'rgba16float',
-          blend: {
-            color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
-            alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
-          },
+          blend: particleBlend,
         }],
       },
       primitive: { topology: 'triangle-list' },
@@ -168,6 +169,7 @@ export class RenderPipelines {
       entries: [
         { binding: 0, resource: { buffer: buffers.particleBuffer } },
         { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+        { binding: 2, resource: { buffer: buffers.ballDataBuffer } },
       ],
     });
 

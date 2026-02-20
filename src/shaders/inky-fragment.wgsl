@@ -1,5 +1,5 @@
-// nebula-fragment.wgsl — Nebula theme particle fragment shader
-// Gaussian falloff with glow for luminous cloud effect
+// inky-fragment.wgsl — Ink in water: soft ink drops with premultiplied alpha
+// Particles darken the bright background where they pool
 
 struct VertexOut {
     @builtin(position) pos : vec4<f32>,
@@ -19,11 +19,12 @@ fn fs_main(in : VertexOut) -> @location(0) vec4<f32> {
     // Smooth falloff to zero at circle edge (no discard needed)
     let circle = max(1.0 - dist2, 0.0);
 
-    // Gaussian falloff: bright core fading to translucent edges
-    let intensity = exp(-dist2 * in.glow_falloff) * in.brightness * circle;
+    // Soft ink drop falloff — wider and gentler than nebula's glow
+    let falloff = exp(-dist2 * in.glow_falloff) * circle;
 
-    // HDR color — can exceed 1.0 for bloom-like effect via additive blending
-    let hdr_color = in.color * intensity * in.alpha * 0.6;
+    // Ink opacity: how much this particle darkens the background
+    let ink_alpha = falloff * in.alpha * in.brightness * 0.35;
 
-    return vec4(hdr_color, intensity * in.alpha);
+    // Premultiplied alpha output (blended with one, one-minus-src-alpha)
+    return vec4(in.color * ink_alpha, ink_alpha);
 }
