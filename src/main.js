@@ -133,6 +133,11 @@ async function main() {
   // Frame loop
   let frameNumber = 0;
 
+  // --- Profiling logger: tracks timing trends over time ---
+  const PROFILE_INTERVAL = 60; // log every 60 frames (~1s)
+  let profileStart = performance.now();
+  const cpuTimeSamples = [];
+
   function frame() {
     requestAnimationFrame(frame);
 
@@ -172,8 +177,14 @@ async function main() {
     const runHomog = cycleManager.shouldCheckHomogeneity(frameNumber) &&
                      buffers.homogReadbackAvailable;
 
+    // CPU-side timing around the render call
+    const cpuStart = performance.now();
+
     // Render — dispatch activeCount but bin buffers use full allocated size
     frameEncoder.render(gpu, activeCount, buffers.binCount, runHomog, config.get('ballCount'));
+
+    const cpuEnd = performance.now();
+    cpuTimeSamples.push(cpuEnd - cpuStart);
 
     // Async homogeneity readback (non-blocking, 1-2 frames behind)
     if (runHomog) {
@@ -193,6 +204,36 @@ async function main() {
       const timings = passTimer.getPassTimings();
       for (const [name, ms] of timings) {
         ui.passTimes[name] = ms;
+      }
+    }
+
+    // --- Profiling log every PROFILE_INTERVAL frames ---
+    if (frameNumber > 0 && frameNumber % PROFILE_INTERVAL === 0) {
+      const elapsed = ((performance.now() - profileStart) / 1000).toFixed(1);
+      const avgCpu = cpuTimeSamples.length > 0
+        ? (cpuTimeSamples.reduce((a, b) => a + b) / cpuTimeSamples.length).toFixed(2)
+        : '?';
+      cpuTimeSamples.length = 0;
+
+      const parts = [`[PERF t=${elapsed}s f=${frameNumber} fps=${gpuTiming.fps.toFixed(0)} cpu=${avgCpu}ms cycle=${cycleManager.state}`];
+      if (passTimer.enabled) {
+        const t = passTimer.getPassTimings();
+        const names = ['clear_bins', 'count_bins', 'prefix_sum', 'sort', 'density', 'forces', 'integrate', 'render_total'];
+        const vals = names.map(n => `${n}=${(t.get(n) || 0).toFixed(3)}`);
+        parts.push(vals.join(' '));
+        const gpuTotal = names.reduce((sum, n) => sum + (t.get(n) || 0), 0);
+        parts.push(`gpu_total=${gpuTotal.toFixed(3)}ms`);
+      }
+      parts.push(`particles=${activeCount} bins=${buffers.binCount} fade=${cycleManager.fadeAlpha.toFixed(2)}]`);
+      console.log(parts.join(' | '));
+
+      // Bin distribution diagnostic (every 5s = every 300 frames)
+      if (frameNumber % 300 === 0) {
+        buffers.readBinDistribution().then(dist => {
+          if (dist) {
+            console.log(`[BINS max=${dist.max} mean=${dist.mean.toFixed(1)} nonEmpty=${dist.nonEmpty}/${buffers.binCount} total=${dist.total}]`);
+          }
+        });
       }
     }
 

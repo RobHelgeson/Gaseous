@@ -157,7 +157,7 @@ export class Buffers {
     this.binCountSavedBuffer = this.#device.createBuffer({
       label: 'binCountSavedBuffer',
       size: byteSize,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     });
     this.binOffsetBufferA = this.#device.createBuffer({
       label: 'binOffsetBufferA',
@@ -302,6 +302,38 @@ export class Buffers {
       return null;
     } finally {
       this.#homogReadbackAvailable = true;
+    }
+  }
+
+  /** Diagnostic: read back saved bin counts to analyze particle distribution.
+   *  Returns { max, mean, nonEmpty, total } or null if unavailable. */
+  async readBinDistribution() {
+    const size = this.#binCount * 4;
+    const readback = this.#device.createBuffer({
+      label: 'bin-dist-readback',
+      size,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+    const enc = this.#device.createCommandEncoder({ label: 'bin-dist-copy' });
+    enc.copyBufferToBuffer(this.binCountSavedBuffer, 0, readback, 0, size);
+    this.#device.queue.submit([enc.finish()]);
+    try {
+      await readback.mapAsync(GPUMapMode.READ);
+      const data = new Uint32Array(readback.getMappedRange());
+      let max = 0, sum = 0, nonEmpty = 0;
+      // Exclude last bin (dead particle overflow)
+      for (let i = 0; i < data.length - 1; i++) {
+        const c = data[i];
+        if (c > 0) nonEmpty++;
+        if (c > max) max = c;
+        sum += c;
+      }
+      readback.unmap();
+      readback.destroy();
+      return { max, mean: sum / Math.max(nonEmpty, 1), nonEmpty, total: sum };
+    } catch {
+      readback.destroy();
+      return null;
     }
   }
 
