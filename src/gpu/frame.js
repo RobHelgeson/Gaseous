@@ -11,6 +11,9 @@ export class FrameEncoder {
   #startTime = performance.now();
   /** @type {import('./gpu-timing.js').GpuPassTimer|null} */
   #passTimer = null;
+  /** @type {GPUBuffer} */
+  #resolveParamsBuffer;
+  #resolveBindGroup = null;
 
   computePipelines = null;
   computeBindGroups = null;
@@ -29,6 +32,14 @@ export class FrameEncoder {
     });
     this.#bgBindGroup = renderPipelines.createBackgroundBindGroup(this.#bgParamsBuffer);
 
+    // Resolve params uniform buffer (32 bytes, 8 floats) for metaball theme
+    this.#resolveParamsBuffer = device.createBuffer({
+      label: 'resolveParamsBuffer',
+      size: 32,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.#resolveBindGroup = renderPipelines.createResolveBindGroup(buffers, this.#resolveParamsBuffer);
+
     this.bindGroups = renderPipelines.createBindGroups(buffers);
     if (computePipelines) {
       this.computeBindGroups = computePipelines.createBindGroups(buffers);
@@ -38,6 +49,7 @@ export class FrameEncoder {
   /** Recreate bind groups after resize or buffer recreation */
   rebuildBindGroups() {
     this.bindGroups = this.pipelines.createBindGroups(this.buffers);
+    this.#resolveBindGroup = this.pipelines.createResolveBindGroup(this.buffers, this.#resolveParamsBuffer);
     if (this.computePipelines) {
       this.computeBindGroups = this.computePipelines.createBindGroups(this.buffers);
     }
@@ -46,6 +58,11 @@ export class FrameEncoder {
   /** Rebuild background bind group after pipeline recreation (theme switch) */
   rebuildBgBindGroup() {
     this.#bgBindGroup = this.pipelines.createBackgroundBindGroup(this.#bgParamsBuffer);
+  }
+
+  /** Rebuild resolve bind group after pipeline recreation (theme switch) */
+  rebuildResolveBindGroup() {
+    this.#resolveBindGroup = this.pipelines.createResolveBindGroup(this.buffers, this.#resolveParamsBuffer);
   }
 
   /** Set GPU pass timer for per-pass profiling */
@@ -78,7 +95,16 @@ export class FrameEncoder {
       this.#uploadBgParams(gpu.width, gpu.height);
       this.#renderBackground(encoder);
       this.#renderFog(encoder, ballCount);
-      this.#renderParticles(encoder, particleCount, flip);
+
+      const isMetaball = getActiveTheme().rendering.mode === 'metaball';
+      if (isMetaball) {
+        this.#renderParticlesToEnergy(encoder, particleCount, flip);
+        this.#uploadResolveParams(gpu.width, gpu.height);
+        this.#renderMetaballResolve(encoder);
+      } else {
+        this.#renderParticles(encoder, particleCount, flip);
+      }
+
       this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
 
       // Resolve GPU timestamps before finishing the encoder
@@ -106,8 +132,17 @@ export class FrameEncoder {
       this.#uploadBgParams(gpu.width, gpu.height);
       this.#renderBackground(encoder);
       this.#renderFog(encoder, ballCount);
-      // In non-compute mode, render from buffer A (initial data, no ping-pong)
-      this.#renderParticles(encoder, particleCount, false);
+
+      const isMetaball2 = getActiveTheme().rendering.mode === 'metaball';
+      if (isMetaball2) {
+        this.#renderParticlesToEnergy(encoder, particleCount, false);
+        this.#uploadResolveParams(gpu.width, gpu.height);
+        this.#renderMetaballResolve(encoder);
+      } else {
+        // In non-compute mode, render from buffer A (initial data, no ping-pong)
+        this.#renderParticles(encoder, particleCount, false);
+      }
+
       this.#renderTonemap(encoder, gpu.ctx.getCurrentTexture().createView());
       this.#device.queue.submit([encoder.finish()]);
     }
@@ -323,6 +358,53 @@ export class FrameEncoder {
     pass.end();
   }
 
+  #renderParticlesToEnergy(encoder, particleCount, flip) {
+    const particleBG = this.bindGroups.particleBGByFlip[flip];
+    const pass = encoder.beginRenderPass({
+      label: 'particles-energy',
+      colorAttachments: [{
+        view: this.buffers.energyView,
+        clearValue: [0, 0, 0, 0],
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(this.pipelines.particlePipeline);
+    pass.setBindGroup(0, particleBG);
+    pass.draw(6, particleCount);
+    pass.end();
+  }
+
+  #uploadResolveParams(width, height) {
+    const theme = getActiveTheme();
+    const mb = theme.metaball || {};
+    const buf = new Float32Array(8);
+    buf[0] = width;
+    buf[1] = height;
+    buf[2] = mb.threshold ?? 0.3;
+    buf[3] = mb.edgeSoftness ?? 0.15;
+    buf[4] = mb.specularIntensity ?? 0.3;
+    buf[5] = mb.lightX ?? 0.3;
+    buf[6] = mb.lightY ?? -0.5;
+    buf[7] = 0; // padding
+    this.#device.queue.writeBuffer(this.#resolveParamsBuffer, 0, buf);
+  }
+
+  #renderMetaballResolve(encoder) {
+    const pass = encoder.beginRenderPass({
+      label: 'metaball-resolve',
+      colorAttachments: [{
+        view: this.buffers.hdrView,
+        loadOp: 'load',
+        storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(this.pipelines.resolvePipeline);
+    pass.setBindGroup(0, this.#resolveBindGroup);
+    pass.draw(3);
+    pass.end();
+  }
+
   #renderTonemap(encoder, swapView) {
     const tw = this.#passTimer?.getTimestampWrites(this.#passTimer.passIndex('render_total'));
     // Attach end timestamp to last render pass
@@ -345,5 +427,6 @@ export class FrameEncoder {
 
   destroy() {
     this.#bgParamsBuffer?.destroy();
+    this.#resolveParamsBuffer?.destroy();
   }
 }
