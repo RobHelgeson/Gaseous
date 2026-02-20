@@ -7,6 +7,9 @@
 @group(0) @binding(2) var<storage, read> bin_offsets : array<u32>;
 @group(0) @binding(3) var<storage, read> bin_counts : array<u32>;
 
+// Cap per-bin neighbor iterations to prevent O(n²) blowup from gravitational hotspots
+const MAX_PER_BIN : u32 = 128u;
+
 @compute @workgroup_size(256)
 fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
     let idx = gid.x;
@@ -38,7 +41,7 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
         for (var nx = min_cx; nx <= max_cx; nx++) {
             let cell = ny * params.bins_x + nx;
             let start = bin_offsets[cell];
-            let count = bin_counts[cell];
+            let count = min(bin_counts[cell], MAX_PER_BIN);
 
             for (var j = start; j < start + count; j++) {
                 if (j == idx) { continue; }
