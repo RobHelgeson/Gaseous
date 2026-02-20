@@ -99,3 +99,114 @@ export class GpuTiming {
     }
   }
 }
+
+// --- Per-pass GPU timestamp profiling ---
+
+const PASS_NAMES = [
+  'clear_bins', 'count_bins', 'prefix_sum', 'sort',
+  'density', 'forces', 'integrate', 'render_total',
+];
+const TIMESTAMP_COUNT = PASS_NAMES.length * 2; // begin + end per pass
+const READBACK_SMOOTHING = 0.9; // EMA alpha for smoothing timings
+
+export class GpuPassTimer {
+  #device;
+  #querySet = null;
+  #resolveBuffer = null;
+  #readbackBuffer = null;
+  #readbackAvailable = true;
+  #enabled = false;
+  /** @type {Map<string, number>} smoothed pass durations in ms */
+  #timings = new Map();
+  #timestampPeriod = 1;
+
+  constructor(device, hasTimestampQuery) {
+    this.#device = device;
+    if (!hasTimestampQuery) return;
+
+    this.#enabled = true;
+    this.#querySet = device.createQuerySet({
+      type: 'timestamp',
+      count: TIMESTAMP_COUNT,
+    });
+    this.#resolveBuffer = device.createBuffer({
+      label: 'timestamp-resolve',
+      size: TIMESTAMP_COUNT * 8, // 8 bytes per u64 timestamp
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    this.#readbackBuffer = device.createBuffer({
+      label: 'timestamp-readback',
+      size: TIMESTAMP_COUNT * 8,
+      usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+    });
+
+    // Initialize smoothed timings to 0
+    for (const name of PASS_NAMES) {
+      this.#timings.set(name, 0);
+    }
+  }
+
+  get enabled() { return this.#enabled; }
+
+  /** Get timestamp writes descriptor for a compute/render pass */
+  getTimestampWrites(passIndex) {
+    if (!this.#enabled) return undefined;
+    return {
+      querySet: this.#querySet,
+      beginningOfPassWriteIndex: passIndex * 2,
+      endOfPassWriteIndex: passIndex * 2 + 1,
+    };
+  }
+
+  /** Pass index by name */
+  passIndex(name) {
+    return PASS_NAMES.indexOf(name);
+  }
+
+  /** Resolve timestamps and copy to readback buffer after encoding all passes */
+  resolve(encoder) {
+    if (!this.#enabled) return;
+    encoder.resolveQuerySet(this.#querySet, 0, TIMESTAMP_COUNT, this.#resolveBuffer, 0);
+    encoder.copyBufferToBuffer(
+      this.#resolveBuffer, 0,
+      this.#readbackBuffer, 0,
+      TIMESTAMP_COUNT * 8,
+    );
+  }
+
+  /** Non-blocking async readback of timestamp data */
+  readback() {
+    if (!this.#enabled || !this.#readbackAvailable) return;
+    this.#readbackAvailable = false;
+
+    this.#readbackBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const data = new BigInt64Array(this.#readbackBuffer.getMappedRange());
+      for (let i = 0; i < PASS_NAMES.length; i++) {
+        const begin = data[i * 2];
+        const end = data[i * 2 + 1];
+        if (end > begin) {
+          const durationNs = Number(end - begin);
+          const durationMs = durationNs / 1_000_000;
+          const prev = this.#timings.get(PASS_NAMES[i]) || 0;
+          this.#timings.set(PASS_NAMES[i],
+            prev * READBACK_SMOOTHING + durationMs * (1 - READBACK_SMOOTHING));
+        }
+      }
+      this.#readbackBuffer.unmap();
+      this.#readbackAvailable = true;
+    }).catch(() => {
+      this.#readbackAvailable = true;
+    });
+  }
+
+  /** @returns {Map<string, number>} pass name → smoothed duration in ms */
+  getPassTimings() {
+    return this.#timings;
+  }
+
+  destroy() {
+    this.#querySet?.destroy();
+    this.#resolveBuffer?.destroy();
+    this.#readbackBuffer?.destroy();
+  }
+}

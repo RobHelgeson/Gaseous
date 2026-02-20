@@ -11,7 +11,7 @@ import { FrameEncoder } from './gpu/frame.js';
 import { loadSharedStructs } from './gpu/shader-loader.js';
 import { BallManager } from './ball-manager.js';
 import { CycleManager } from './cycle-manager.js';
-import { GpuTiming } from './gpu/gpu-timing.js';
+import { GpuTiming, GpuPassTimer } from './gpu/gpu-timing.js';
 import { loadThemes, getActiveTheme, setActiveTheme, getTheme, nextThemeId } from './themes/theme-registry.js';
 
 async function main() {
@@ -50,6 +50,8 @@ async function main() {
   ]);
 
   const frameEncoder = new FrameEncoder(gpu.device, renderPipelines, computePipelines, buffers);
+  const passTimer = new GpuPassTimer(gpu.device, gpu.hasTimestampQuery);
+  frameEncoder.setPassTimer(passTimer);
 
   // Cycle manager — respawn callback reinits buffers + bind groups
   const cycleManager = new CycleManager(config, ballManager, () => {
@@ -186,13 +188,21 @@ async function main() {
     ui.perf.activeParticles = activeCount;
     ui.perf.cycleState = cycleManager.state;
 
+    // Update per-pass GPU timings
+    if (passTimer.enabled) {
+      const timings = passTimer.getPassTimings();
+      for (const [name, ms] of timings) {
+        ui.passTimes[name] = ms;
+      }
+    }
+
     frameNumber++;
   }
 
   requestAnimationFrame(frame);
 
   // Expose for debugging
-  window.__gaseous = { config, gpu, input, ui, buffers, ballManager, cycleManager, gpuTiming, renderPipelines, computePipelines };
+  window.__gaseous = { config, gpu, input, ui, buffers, ballManager, cycleManager, gpuTiming, passTimer, renderPipelines, computePipelines };
 }
 
 main();

@@ -159,20 +159,13 @@ export class RenderPipelines {
     });
   }
 
-  /** Create bind groups that reference current buffers/textures */
+  /** Create bind groups that reference current buffers/textures.
+   *  Particle rendering reads from the sort target buffer (has sorted + integrated data).
+   *  Returns bind groups for both flip orientations. */
   createBindGroups(buffers) {
     const device = this.#device;
 
-    const particleBG = device.createBindGroup({
-      label: 'particle-bg',
-      layout: this.particleBindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: buffers.particleBuffer } },
-        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
-        { binding: 2, resource: { buffer: buffers.ballDataBuffer } },
-      ],
-    });
-
+    // Fog and tonemap don't depend on particle buffer orientation
     const fogBG = device.createBindGroup({
       label: 'fog-bg',
       layout: this.fogBindGroupLayout,
@@ -191,7 +184,25 @@ export class RenderPipelines {
       ],
     });
 
-    return { particleBG, fogBG, tonemapBG };
+    // Particle BG per flip state: render reads from sort target
+    const makeParticleBG = (sortTargetBuf) => device.createBindGroup({
+      label: 'particle-bg',
+      layout: this.particleBindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: sortTargetBuf } },
+        { binding: 1, resource: { buffer: buffers.simParamsBuffer } },
+        { binding: 2, resource: { buffer: buffers.ballDataBuffer } },
+      ],
+    });
+
+    return {
+      fogBG,
+      tonemapBG,
+      particleBGByFlip: {
+        true: makeParticleBG(buffers.particleBufferB),   // flip=true -> sort target is B
+        false: makeParticleBG(buffers.particleBufferA),  // flip=false -> sort target is A
+      },
+    };
   }
 
   /** Create background bind group with uniform buffer */

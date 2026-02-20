@@ -8,13 +8,17 @@ export class Buffers {
   /** @type {GPUDevice} */
   #device;
   /** @type {GPUBuffer} */
-  particleBuffer = null;
+  particleBufferA = null;
   /** @type {GPUBuffer} */
-  particleSortBuffer = null;
+  particleBufferB = null;
+  /** Which buffer has the current (readable) particle data: true = A, false = B */
+  #particleFlip = true;
   /** @type {GPUBuffer} */
   simParamsBuffer = null;
   /** @type {GPUBuffer} */
   binCountBuffer = null;
+  /** @type {GPUBuffer} */
+  binCountSavedBuffer = null;
   /** @type {GPUBuffer} */
   binOffsetBufferA = null;
   /** @type {GPUBuffer} */
@@ -48,8 +52,8 @@ export class Buffers {
 
   init(particleCount, width, height, sphRadius, ballManager) {
     this.#particleCount = particleCount;
-    this.#createParticleBuffer(particleCount, width, height, ballManager);
-    this.#createSortBuffer(particleCount);
+    this.#particleFlip = true;
+    this.#createParticleBuffers(particleCount, width, height, ballManager);
     this.#createSimParamsBuffer();
     this.#createBallDataBuffer();
     this.#createBinBuffers(width, height, sphRadius);
@@ -59,7 +63,10 @@ export class Buffers {
     this.#createHomogeneityBuffers();
   }
 
-  #createParticleBuffer(count, canvasW, canvasH, ballManager) {
+  #createParticleBuffers(count, canvasW, canvasH, ballManager) {
+    if (this.particleBufferA) this.particleBufferA.destroy();
+    if (this.particleBufferB) this.particleBufferB.destroy();
+
     const data = new ArrayBuffer(count * PARTICLE_BYTE_SIZE);
     const f32 = new Float32Array(data);
     const u32 = new Uint32Array(data);
@@ -111,27 +118,29 @@ export class Buffers {
       u32[base + 11] = 1;    // flags: alive=1
     }
 
-    this.particleBuffer = this.#device.createBuffer({
-      label: 'particleBuffer',
+    const bufferUsage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
+
+    // Buffer A gets initial particle data
+    this.particleBufferA = this.#device.createBuffer({
+      label: 'particleBufferA',
       size: data.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      usage: bufferUsage,
       mappedAtCreation: true,
     });
-    new Uint8Array(this.particleBuffer.getMappedRange()).set(new Uint8Array(data));
-    this.particleBuffer.unmap();
-  }
+    new Uint8Array(this.particleBufferA.getMappedRange()).set(new Uint8Array(data));
+    this.particleBufferA.unmap();
 
-  #createSortBuffer(count) {
-    if (this.particleSortBuffer) this.particleSortBuffer.destroy();
-    this.particleSortBuffer = this.#device.createBuffer({
-      label: 'particleSortBuffer',
-      size: count * PARTICLE_BYTE_SIZE,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    // Buffer B starts empty (sort target for first frame)
+    this.particleBufferB = this.#device.createBuffer({
+      label: 'particleBufferB',
+      size: data.byteLength,
+      usage: bufferUsage,
     });
   }
 
   #createBinBuffers(width, height, sphRadius) {
     if (this.binCountBuffer) this.binCountBuffer.destroy();
+    if (this.binCountSavedBuffer) this.binCountSavedBuffer.destroy();
     if (this.binOffsetBufferA) this.binOffsetBufferA.destroy();
     if (this.binOffsetBufferB) this.binOffsetBufferB.destroy();
 
@@ -144,6 +153,11 @@ export class Buffers {
       label: 'binCountBuffer',
       size: byteSize,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+    });
+    this.binCountSavedBuffer = this.#device.createBuffer({
+      label: 'binCountSavedBuffer',
+      size: byteSize,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     this.binOffsetBufferA = this.#device.createBuffer({
       label: 'binOffsetBufferA',
@@ -291,16 +305,28 @@ export class Buffers {
     }
   }
 
+  /** Buffer with current particle data (read source for spatial hash) */
+  get currentParticleBuffer() { return this.#particleFlip ? this.particleBufferA : this.particleBufferB; }
+  /** Buffer that sort writes into (becomes current next frame) */
+  get sortTargetBuffer() { return this.#particleFlip ? this.particleBufferB : this.particleBufferA; }
+  /** Flip buffers at end of frame */
+  flipParticleBuffers() { this.#particleFlip = !this.#particleFlip; }
+  /** Legacy alias — returns current particle buffer for compatibility */
+  get particleBuffer() { return this.currentParticleBuffer; }
+  /** Legacy alias — returns sort target for compatibility */
+  get particleSortBuffer() { return this.sortTargetBuffer; }
+
   get homogReadbackBuffer() { return this.#homogReadbackBuffer; }
   get homogReadbackAvailable() { return this.#homogReadbackAvailable; }
   get particleCount() { return this.#particleCount; }
   get binCount() { return this.#binCount; }
 
   destroy() {
-    this.particleBuffer?.destroy();
-    this.particleSortBuffer?.destroy();
+    this.particleBufferA?.destroy();
+    this.particleBufferB?.destroy();
     this.simParamsBuffer?.destroy();
     this.binCountBuffer?.destroy();
+    this.binCountSavedBuffer?.destroy();
     this.binOffsetBufferA?.destroy();
     this.binOffsetBufferB?.destroy();
     if (this.prefixParamsBuffers) {
